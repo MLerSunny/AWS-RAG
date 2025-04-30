@@ -1,4 +1,5 @@
 import sys
+import os
 from loguru import logger
 
 def setup_logger(name: str):
@@ -12,9 +13,14 @@ def setup_logger(name: str):
         level="INFO"
     )
     
+    # Create logs directory if it doesn't exist
+    logs_dir = "logs"
+    if not os.path.exists(logs_dir):
+        os.makedirs(logs_dir)
+    
     # Add file handler
     logger.add(
-        "logs/app.log",
+        os.path.join(logs_dir, "app.log"),
         rotation="500 MB",
         retention="10 days",
         format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",

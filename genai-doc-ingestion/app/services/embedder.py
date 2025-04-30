@@ -2,8 +2,8 @@ import boto3
 from typing import List
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from app.config import settings
-from app.utils.logger import setup_logger
+from ..config import settings
+from ..utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 

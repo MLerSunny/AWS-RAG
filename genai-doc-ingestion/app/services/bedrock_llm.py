@@ -1,8 +1,8 @@
 import json
 import boto3
 from typing import Dict
-from app.config import settings
-from app.utils.logger import setup_logger
+from ..config import settings
+from ..utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
