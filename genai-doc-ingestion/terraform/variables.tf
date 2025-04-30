@@ -26,4 +26,10 @@ variable "lambda_function_name" {
   description = "Name of the Lambda function"
   type        = string
   default     = "document-processor"
+}
+
+variable "environment" {
+  description = "Deployment environment (e.g., dev, staging, prod)"
+  type        = string
+  default     = "dev"
 } 
