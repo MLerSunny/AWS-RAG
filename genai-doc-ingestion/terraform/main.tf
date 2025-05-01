@@ -11,6 +11,32 @@ provider "aws" {
   region = var.aws_region
 }
 
+# AWS Secrets Manager for storing credentials
+resource "aws_secretsmanager_secret" "opensearch_credentials" {
+  name        = "${var.environment}-opensearch-credentials"
+  description = "OpenSearch credentials for the RAG application"
+}
+
+resource "aws_secretsmanager_secret_version" "opensearch_credentials" {
+  secret_id     = aws_secretsmanager_secret.opensearch_credentials.id
+  secret_string = jsonencode({
+    username = var.opensearch_master_user
+    password = var.opensearch_master_password
+  })
+}
+
+resource "aws_secretsmanager_secret" "bedrock_credentials" {
+  name        = "${var.environment}-bedrock-credentials"
+  description = "AWS Bedrock credentials for the RAG application"
+}
+
+resource "aws_secretsmanager_secret_version" "bedrock_credentials" {
+  secret_id     = aws_secretsmanager_secret.bedrock_credentials.id
+  secret_string = jsonencode({
+    model_id = var.bedrock_model_id
+  })
+}
+
 # S3 Bucket for documents
 resource "aws_s3_bucket" "documents" {
   bucket = var.bucket_name
@@ -39,12 +65,26 @@ resource "aws_opensearch_domain" "vector_store" {
     volume_size = 10
   }
 
+  vpc_options {
+    subnet_ids         = var.subnet_ids
+    security_group_ids = var.security_group_ids
+  }
+
   node_to_node_encryption {
     enabled = true
   }
 
   encrypt_at_rest {
     enabled = true
+  }
+
+  advanced_security_options {
+    enabled                        = true
+    internal_user_database_enabled = true
+    master_user_options {
+      master_user_name     = var.opensearch_master_user
+      master_user_password = var.opensearch_master_password
+    }
   }
 }
 
@@ -58,10 +98,18 @@ resource "aws_lambda_function" "document_processor" {
   timeout          = 300
   memory_size      = 1024
 
+  vpc_config {
+    subnet_ids         = var.subnet_ids
+    security_group_ids = var.security_group_ids
+  }
+
   environment {
     variables = {
       OPENSEARCH_HOST = aws_opensearch_domain.vector_store.endpoint
       OPENSEARCH_PORT = "443"
+      OPENSEARCH_CREDENTIALS_SECRET = aws_secretsmanager_secret.opensearch_credentials.name
+      BEDROCK_CREDENTIALS_SECRET = aws_secretsmanager_secret.bedrock_credentials.name
+      ENVIRONMENT = var.environment
     }
   }
 }
@@ -108,7 +156,17 @@ resource "aws_iam_role_policy" "lambda_policy" {
         Action = [
           "bedrock:InvokeModel"
         ]
-        Resource = "*"
+        Resource = "arn:aws:bedrock:${var.aws_region}::foundation-model/${var.bedrock_model_id}"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue"
+        ]
+        Resource = [
+          aws_secretsmanager_secret.opensearch_credentials.arn,
+          aws_secretsmanager_secret.bedrock_credentials.arn
+        ]
       },
       {
         Effect = "Allow"
@@ -117,7 +175,16 @@ resource "aws_iam_role_policy" "lambda_policy" {
           "logs:CreateLogStream",
           "logs:PutLogEvents"
         ]
-        Resource = "arn:aws:logs:*:*:*"
+        Resource = "arn:aws:logs:${var.aws_region}:*:log-group:/aws/lambda/${var.lambda_function_name}:*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:CreateNetworkInterface",
+          "ec2:DescribeNetworkInterfaces",
+          "ec2:DeleteNetworkInterface"
+        ]
+        Resource = "*"
       }
     ]
   })
