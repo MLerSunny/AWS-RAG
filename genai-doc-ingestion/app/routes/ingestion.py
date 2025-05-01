@@ -62,7 +62,7 @@ async def process_document_async(
     content: bytes, 
     filename: str, 
     document_id: Optional[str] = None, 
-    metadata: Dict[str, Any] = None
+    metadata: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """Process a document asynchronously and return results."""
     try:
@@ -144,7 +144,7 @@ async def ingest_document(
     file: UploadFile = File(...),
     document_id: Optional[str] = None,
     metadata: Optional[str] = Form(None),
-    background_tasks: BackgroundTasks = None
+    background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     try:
         # Parse metadata if provided
@@ -157,6 +157,10 @@ async def ingest_document(
         
         # Read file content
         content = await file.read()
+        
+        # Check if filename exists
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="File must have a name")
         
         # Process the document
         result = await process_document_async(
@@ -209,6 +213,11 @@ async def batch_ingest_documents(
                 # Read file content
                 content = await file.read()
                 
+                # Check if filename exists
+                if not file.filename:
+                    failed_documents.append("Unnamed file")
+                    continue
+                
                 # Process the document
                 result = await process_document_async(
                     content=content,
@@ -223,8 +232,8 @@ async def batch_ingest_documents(
                     failed_documents.append(file.filename)
                     
             except Exception as e:
-                logger.warning(f"Error processing {file.filename}: {str(e)}")
-                failed_documents.append(file.filename)
+                logger.warning(f"Error processing {file.filename or 'unnamed file'}: {str(e)}")
+                failed_documents.append(file.filename or "unnamed file")
                 continue
         
         # Determine if the operation was at least partially successful

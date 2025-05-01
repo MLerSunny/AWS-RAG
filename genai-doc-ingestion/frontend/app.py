@@ -24,7 +24,7 @@ def query_documents(query: str, top_k: int = 5) -> Dict:
         return response.json()
     except Exception as e:
         st.error(f"Error querying documents: {str(e)}")
-        return None
+        return {}
 
 def main():
     st.title("📚 GenAI Document Ingestion System")

@@ -55,4 +55,4 @@ The Terraform configuration in this directory manages the following resources:
 
 ## Variables
 
-Key variables are defined in `variables.tf` and can be overridden via command line or in a `terraform.tfvars` file. 
+Key variables are defined in `variables.tf` and can be overridden via command line or in a `terraform.tfvars` file.
