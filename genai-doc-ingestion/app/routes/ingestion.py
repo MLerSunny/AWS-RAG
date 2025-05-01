@@ -114,9 +114,8 @@ async def process_document_async(
                         **chunk.get("metadata", {})
                     }
                 }
-                
                 # Index the document
-                if opensearch.index_document(index_doc):
+                if opensearch.index_document(document_id=doc_id, embedding=embedding, content=chunk["text"], metadata=index_doc["metadata"]):
                     successful_chunks += 1
                 
                 total_chunks += 1
