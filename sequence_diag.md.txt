@@ -1,0 +1,31 @@
+# AWS-RAG Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    %% Query Flow
+    participant U as User
+    participant S as Streamlit UI
+    participant A as FastAPI
+    participant O as OpenSearch
+    participant B as Bedrock LLM
+
+    U->>S: Enter query and submit  
+    S->>A: POST /api/v1/query { question }  
+    A->>A: Embed query text (Embedder)  
+    A->>O: KNN search for top-k chunks  
+    O-->>A: Return relevant chunks  
+    A->>B: Generate answer using retrieved chunks  
+    B-->>A: Return LLM-generated answer  
+    A-->>S: Respond with answer + citations  
+    S-->>U: Display results  
+
+    %% Ingestion Flow
+    participant L as AWS Lambda
+    participant C as Chunker Service
+    participant E as Embedder Service
+    participant OS as OpenSearch
+
+    Note over U,L: Upload document to S3  
+    L->>C: Invoke chunking on document text  
+    C->>E: Generate embeddings for chunks  
+    E->>OS: Index embeddings in OpenSearch  

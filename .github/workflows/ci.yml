@@ -1,0 +1,174 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'development'
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+
+jobs:
+  lint:
+    name: Lint Code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install flake8 mypy black isort
+          
+      - name: Run flake8
+        run: flake8 genai-doc-ingestion
+        
+      - name: Run mypy
+        run: mypy genai-doc-ingestion
+        
+      - name: Run black check
+        run: black --check genai-doc-ingestion
+        
+      - name: Run isort check
+        run: isort --check --profile black genai-doc-ingestion
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+          
+      - name: Run unit tests
+        run: |
+          pytest tests/unit --cov=genai-doc-ingestion --cov-report=xml
+          
+      - name: Upload coverage report
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: false
+
+  terraform-validate:
+    name: Validate Terraform
+    runs-on: ubuntu-latest
+    needs: lint
+    defaults:
+      run:
+        working-directory: ./genai-doc-ingestion/terraform
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: '1.3.0'
+          
+      - name: Terraform Format
+        run: terraform fmt -check
+        
+      - name: Terraform Init
+        run: terraform init -backend=false
+        
+      - name: Terraform Validate
+        run: terraform validate
+
+  build:
+    name: Build Package
+    runs-on: ubuntu-latest
+    needs: [test, terraform-validate]
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+          
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build wheel
+          
+      - name: Build package
+        run: python -m build
+        
+      - name: Archive build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: dist
+          path: dist/
+          retention-days: 5
+
+  deploy:
+    name: Deploy to Environment
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    needs: build
+    environment: ${{ github.event.inputs.environment }}
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Download build artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: dist
+          path: dist/
+          
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: '1.3.0'
+          
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          
+      - name: Terraform Init
+        working-directory: ./genai-doc-ingestion/terraform/${{ github.event.inputs.environment }}
+        run: terraform init
+        
+      - name: Terraform Plan
+        working-directory: ./genai-doc-ingestion/terraform/${{ github.event.inputs.environment }}
+        run: terraform plan -out=tfplan
+        
+      - name: Terraform Apply
+        working-directory: ./genai-doc-ingestion/terraform/${{ github.event.inputs.environment }}
+        run: terraform apply -auto-approve tfplan
+        
+      - name: Deploy Application
+        run: |
+          echo "Deploying to ${{ github.event.inputs.environment }}..."
+          # Add deployment scripts here, e.g., AWS CodeDeploy or direct deployment to EC2/Lambda/ECS 
