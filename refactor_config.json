@@ -1,0 +1,29 @@
+{
+  "project_settings": {
+    "project_root": ".",
+    "target_directories": ["genai-doc-ingestion"],
+    "backup_enabled": true
+  },
+  "execution": {
+    "max_iterations": 10,
+    "test_command": "pytest",
+    "lint_command": "flake8"
+  },
+  "refactoring": {
+    "initial_instructions": "Refactor the codebase to fix any failing tests and lint errors",
+    "additional_instructions": [
+      "Improve code quality by reducing complexity",
+      "Enhance type annotations",
+      "Apply consistent code formatting"
+    ]
+  },
+  "cursor_agent": {
+    "timeout_seconds": 300,
+    "command_template": "cursor agent \"{instructions}\""
+  },
+  "reporting": {
+    "report_file": "refactor_report.md",
+    "log_file": "refactor_logs.log",
+    "verbose": true
+  }
+} 

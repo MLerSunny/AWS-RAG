@@ -1,0 +1,4 @@
+{
+    "azureTerraform.terminal": "integrated",
+    "python.analysis.typeCheckingMode": "basic"
+}
