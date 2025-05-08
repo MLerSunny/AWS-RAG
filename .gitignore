@@ -1,12 +1,3 @@
-# Python virtual environment
-.venv/
-venv/
-env/
-
-# Embedded repositories
-genai-doc-ingestion/
-refactor_backups/
-
 # Python artifacts
 __pycache__/
 *.py[cod]
@@ -29,7 +20,46 @@ wheels/
 .installed.cfg
 *.egg
 
-# Logs and temporary files
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv/
+
+# Embedded repositories
+genai-doc-ingestion/
+refactor_backups/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment variables
+.env
+.env.local
+
+# Logs
 *.log
+logs/
 *.tmp
-.DS_Store 
+
+# Local development
+.DS_Store
+Thumbs.db
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+
+# OpenSearch
+*.opensearch-*
+
+# AWS
+.aws/

@@ -2,14 +2,85 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, master, develop ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main, master, develop ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'development'
+        type: choice
+        options:
+          - development
+          - staging
+          - production
 
 jobs:
+  lint:
+    name: Lint Code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install flake8 mypy black isort
+          
+      - name: Run flake8
+        run: flake8 genai-doc-ingestion
+        
+      - name: Run mypy
+        run: mypy genai-doc-ingestion
+        
+      - name: Run black check
+        run: black --check genai-doc-ingestion
+        
+      - name: Run isort check
+        run: isort --check --profile black genai-doc-ingestion
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+          
+      - name: Run unit tests
+        run: |
+          pytest tests/unit --cov=genai-doc-ingestion --cov-report=xml
+          
+      - name: Upload coverage report
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: false
+
   terraform:
     name: 'Terraform'
     runs-on: ubuntu-latest
+    needs: lint
     defaults:
       run:
         working-directory: ./genai-doc-ingestion/terraform
@@ -46,35 +117,49 @@ jobs:
       - name: Terraform Apply
         run: terraform apply -auto-approve
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-  
-  python:
-    name: 'Python Tests and Build'
+
+  build:
+    name: Build Package
     runs-on: ubuntu-latest
-    needs: terraform
-    defaults:
-      run:
-        working-directory: ./genai-doc-ingestion
-    
+    needs: [test, terraform]
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
       
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
-      
-      - name: Install dependencies
+          python-version: '3.10'
+          cache: 'pip'
+          
+      - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest flake8
+          pip install build wheel
+          
+      - name: Build package
+        run: python -m build
+        
+      - name: Archive build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: dist
+          path: dist/
+          retention-days: 5
+
+  deploy:
+    name: Deploy to Environment
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    needs: build
+    environment: ${{ github.event.inputs.environment }}
+    steps:
+      - uses: actions/checkout@v3
       
-      - name: Run linting
-        run: flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-      
-      - name: Run tests
-        run: pytest
+      - name: Download build artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: dist
+          path: ./dist
       
       - name: Build Docker image
         run: |
@@ -84,7 +169,7 @@ jobs:
   notify:
     name: 'Notification'
     runs-on: ubuntu-latest
-    needs: [terraform, python]
+    needs: [build, deploy]
     if: failure()
     
     steps:
@@ -107,4 +192,4 @@ jobs:
           subject: CI/CD Pipeline Failed
           body: The CI/CD pipeline for AWS-RAG has failed. Please check the GitHub Actions logs for more details.
           to: team@example.com
-          from: CI/CD Pipeline 
+          from: CI/CD Pipeline
