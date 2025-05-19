@@ -3,24 +3,37 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Model Registry Admin Interface">
+    <meta name="theme-color" content="#212529">
     <title>{% block title %}Model Registry Admin{% endblock %}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
     <style>
+        :root {
+            --sidebar-width: 280px;
+            --header-height: 56px;
+            --primary-color: #0d6efd;
+            --error-color: #dc3545;
+            --success-color: #198754;
+            --warning-color: #ffc107;
+        }
+        
         .sidebar {
             position: fixed;
             top: 0;
             bottom: 0;
             left: 0;
             z-index: 100;
-            padding: 48px 0 0;
+            padding: var(--header-height) 0 0;
             box-shadow: inset -1px 0 0 rgba(0, 0, 0, .1);
+            width: var(--sidebar-width);
+            background-color: #f8f9fa;
         }
         
         .sidebar-sticky {
             position: relative;
             top: 0;
-            height: calc(100vh - 48px);
+            height: calc(100vh - var(--header-height));
             padding-top: .5rem;
             overflow-x: hidden;
             overflow-y: auto;
@@ -32,36 +45,124 @@
             font-size: 1rem;
             background-color: rgba(0, 0, 0, .25);
             box-shadow: inset -1px 0 0 rgba(0, 0, 0, .25);
+            width: var(--sidebar-width);
         }
         
         .main-content {
-            padding-top: 70px;
+            padding-top: calc(var(--header-height) + 1rem);
+            margin-left: var(--sidebar-width);
+            min-height: calc(100vh - var(--header-height));
         }
         
         .metric-card {
-            border-left: 4px solid #0d6efd;
+            border-left: 4px solid var(--primary-color);
+            transition: transform 0.2s;
+        }
+        
+        .metric-card:hover {
+            transform: translateY(-2px);
         }
         
         .model-card {
-            transition: transform 0.3s;
+            transition: transform 0.3s, box-shadow 0.3s;
         }
         
         .model-card:hover {
             transform: translateY(-5px);
             box-shadow: 0 4px 8px rgba(0,0,0,0.1);
         }
+        
+        .toast-container {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            z-index: 1050;
+        }
+        
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.8);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1060;
+        }
+        
+        .loading-spinner {
+            width: 3rem;
+            height: 3rem;
+        }
+        
+        .error-message {
+            color: var(--error-color);
+            font-size: 0.875rem;
+            margin-top: 0.25rem;
+        }
+        
+        .success-message {
+            color: var(--success-color);
+            font-size: 0.875rem;
+            margin-top: 0.25rem;
+        }
+        
+        .warning-message {
+            color: var(--warning-color);
+            font-size: 0.875rem;
+            margin-top: 0.25rem;
+        }
+        
+        @media (max-width: 767.98px) {
+            .sidebar {
+                width: 100%;
+                transform: translateX(-100%);
+                transition: transform 0.3s ease-in-out;
+            }
+            
+            .sidebar.show {
+                transform: translateX(0);
+            }
+            
+            .main-content {
+                margin-left: 0;
+            }
+            
+            .navbar-brand {
+                width: auto;
+            }
+        }
     </style>
     {% block extra_css %}{% endblock %}
 </head>
 <body>
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="spinner-border loading-spinner text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
     <header class="navbar navbar-dark sticky-top bg-dark flex-md-nowrap p-0 shadow">
-        <a class="navbar-brand col-md-3 col-lg-2 me-0 px-3" href="/admin/models">Model Registry</a>
-        <button class="navbar-toggler position-absolute d-md-none collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#sidebarMenu" aria-controls="sidebarMenu" aria-expanded="false" aria-label="Toggle navigation">
+        <a class="navbar-brand col-md-3 col-lg-2 me-0 px-3" href="/admin/models" aria-label="Model Registry Home">
+            <i class="bi bi-boxes me-2"></i>Model Registry
+        </a>
+        <button class="navbar-toggler position-absolute d-md-none collapsed" type="button" 
+                data-bs-toggle="collapse" data-bs-target="#sidebarMenu" 
+                aria-controls="sidebarMenu" aria-expanded="false" 
+                aria-label="Toggle navigation">
             <span class="navbar-toggler-icon"></span>
         </button>
         <div class="navbar-nav">
             <div class="nav-item text-nowrap">
-                <a class="nav-link px-3" href="/">Return to Main App</a>
+                <a class="nav-link px-3" href="/" aria-label="Return to Main Application">
+                    <i class="bi bi-arrow-left me-2"></i>Return to Main App
+                </a>
             </div>
         </div>
     </header>
@@ -72,16 +173,39 @@
                 <div class="position-sticky pt-3 sidebar-sticky">
                     <ul class="nav flex-column">
                         <li class="nav-item">
-                            <a class="nav-link {% if request.url.path == '/admin/models' %}active{% endif %}" href="/admin/models">
+                            <a class="nav-link {% if request.url.path == '/admin/models' %}active{% endif %}" 
+                               href="/admin/models" aria-current="{% if request.url.path == '/admin/models' %}page{% endif %}">
                                 <i class="bi bi-boxes me-2"></i>Model Registry
                             </a>
                         </li>
-                        <!-- Add more sidebar items if needed -->
+                        <li class="nav-item">
+                            <a class="nav-link {% if request.url.path == '/admin/metrics' %}active{% endif %}" 
+                               href="/admin/metrics" aria-current="{% if request.url.path == '/admin/metrics' %}page{% endif %}">
+                                <i class="bi bi-graph-up me-2"></i>Metrics
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link {% if request.url.path == '/admin/settings' %}active{% endif %}" 
+                               href="/admin/settings" aria-current="{% if request.url.path == '/admin/settings' %}page{% endif %}">
+                                <i class="bi bi-gear me-2"></i>Settings
+                            </a>
+                        </li>
                     </ul>
                 </div>
             </nav>
 
-            <main class="col-md-9 ms-sm-auto col-lg-10 px-md-4 main-content">
+            <main class="col-md-9 ms-sm-auto col-lg-10 px-md-4 main-content" role="main">
+                {% with messages = get_flashed_messages(with_categories=true) %}
+                    {% if messages %}
+                        {% for category, message in messages %}
+                            <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                                {{ message }}
+                                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                            </div>
+                        {% endfor %}
+                    {% endif %}
+                {% endwith %}
+                
                 {% block content %}{% endblock %}
             </main>
         </div>
@@ -89,6 +213,75 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        // Toast notification function
+        function showToast(message, type = 'info') {
+            const toastContainer = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast align-items-center text-white bg-${type} border-0`;
+            toast.setAttribute('role', 'alert');
+            toast.setAttribute('aria-live', 'assertive');
+            toast.setAttribute('aria-atomic', 'true');
+            
+            toast.innerHTML = `
+                <div class="d-flex">
+                    <div class="toast-body">
+                        ${message}
+                    </div>
+                    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+                </div>
+            `;
+            
+            toastContainer.appendChild(toast);
+            const bsToast = new bootstrap.Toast(toast);
+            bsToast.show();
+            
+            toast.addEventListener('hidden.bs.toast', () => {
+                toast.remove();
+            });
+        }
+        
+        // Loading overlay functions
+        function showLoading() {
+            document.getElementById('loadingOverlay').style.display = 'flex';
+        }
+        
+        function hideLoading() {
+            document.getElementById('loadingOverlay').style.display = 'none';
+        }
+        
+        // Form validation function
+        function validateForm(form) {
+            const inputs = form.querySelectorAll('input[required], select[required], textarea[required]');
+            let isValid = true;
+            
+            inputs.forEach(input => {
+                if (!input.value.trim()) {
+                    input.classList.add('is-invalid');
+                    isValid = false;
+                } else {
+                    input.classList.remove('is-invalid');
+                }
+            });
+            
+            return isValid;
+        }
+        
+        // Error handling for AJAX requests
+        function handleAjaxError(error) {
+            console.error('AJAX Error:', error);
+            showToast('An error occurred. Please try again.', 'danger');
+            hideLoading();
+        }
+        
+        // Initialize tooltips
+        document.addEventListener('DOMContentLoaded', function() {
+            const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+            tooltipTriggerList.map(function(tooltipTriggerEl) {
+                return new bootstrap.Tooltip(tooltipTriggerEl);
+            });
+        });
+    </script>
     {% block extra_js %}{% endblock %}
 </body>
 </html> 

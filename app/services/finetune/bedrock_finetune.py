@@ -1,18 +1,41 @@
 """
 AWS Bedrock fine-tuning implementation.
 """
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Union, TypeVar, Generic, Sequence, cast, Callable, Type
 import json
 import time
 import boto3
 import os
 import uuid
 from enum import Enum
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
+from botocore.exceptions import ClientError
 from ...utils.logger import setup_logger
+from ...utils.validation import validate_not_empty, validate_dict, validate_type, validate_range
 from ...config import settings
 
 logger = setup_logger(__name__)
+
+class FineTuneError(Exception):
+    """Base exception for fine-tuning errors."""
+    def __init__(self, message: str, error_code: str = "FINETUNE_ERROR"):
+        super().__init__(message)
+        self.error_code = error_code
+
+class ValidationError(FineTuneError):
+    """Raised when input validation fails."""
+    def __init__(self, message: str):
+        super().__init__(message, "VALIDATION_ERROR")
+
+class JobError(FineTuneError):
+    """Raised when job operation fails."""
+    def __init__(self, message: str):
+        super().__init__(message, "JOB_ERROR")
+
+class ModelError(FineTuneError):
+    """Raised when model operation fails."""
+    def __init__(self, message: str):
+        super().__init__(message, "MODEL_ERROR")
 
 class FineTuneStatus(str, Enum):
     """Status of a fine-tuning job."""
@@ -47,6 +70,68 @@ class FineTuneConfig(BaseModel):
     lora_alpha: float = 16.0
     lora_dropout: float = 0.05
     target_modules: List[str] = Field(default_factory=lambda: ["q_proj", "v_proj"])
+    
+    @validator('job_name')
+    def validate_job_name(cls, v):
+        """Validate job name."""
+        if not v:
+            raise ValidationError("Job name cannot be empty")
+        if len(v) > 63:
+            raise ValidationError("Job name must be 63 characters or less")
+        if not v[0].isalnum():
+            raise ValidationError("Job name must start with an alphanumeric character")
+        if not all(c.isalnum() or c in '-_' for c in v):
+            raise ValidationError("Job name can only contain alphanumeric characters, hyphens, and underscores")
+        return v
+    
+    @validator('base_model_id')
+    def validate_base_model_id(cls, v):
+        """Validate base model ID."""
+        if not v:
+            raise ValidationError("Base model ID cannot be empty")
+        return v
+    
+    @validator('training_data_path', 'output_data_path')
+    def validate_s3_path(cls, v):
+        """Validate S3 path."""
+        if not v:
+            raise ValidationError("S3 path cannot be empty")
+        if not v.startswith('s3://'):
+            raise ValidationError("S3 path must start with 's3://'")
+        return v
+    
+    @validator('validation_data_path')
+    def validate_validation_path(cls, v):
+        """Validate validation data path."""
+        if v and not v.startswith('s3://'):
+            raise ValidationError("Validation data path must start with 's3://'")
+        return v
+    
+    @validator('lora_rank')
+    def validate_lora_rank(cls, v, values):
+        """Validate LoRA rank."""
+        if values.get('enable_peft') and values.get('peft_method') == 'lora':
+            if v < 1:
+                raise ValidationError("LoRA rank must be at least 1")
+            if v > 64:
+                raise ValidationError("LoRA rank must be at most 64")
+        return v
+    
+    @validator('lora_alpha')
+    def validate_lora_alpha(cls, v, values):
+        """Validate LoRA alpha."""
+        if values.get('enable_peft') and values.get('peft_method') == 'lora':
+            if v <= 0:
+                raise ValidationError("LoRA alpha must be positive")
+        return v
+    
+    @validator('lora_dropout')
+    def validate_lora_dropout(cls, v, values):
+        """Validate LoRA dropout."""
+        if values.get('enable_peft') and values.get('peft_method') == 'lora':
+            if v < 0 or v > 1:
+                raise ValidationError("LoRA dropout must be between 0 and 1")
+        return v
 
 class FineTuneJob(BaseModel):
     """Representation of a fine-tuning job."""
@@ -83,12 +168,18 @@ class FineTuneJob(BaseModel):
 class BedrockFineTuner:
     """Service for fine-tuning AWS Bedrock models."""
     
+    MAX_RETRIES = 3
+    RETRY_DELAY = 1  # seconds
+    
     def __init__(self, region: Optional[str] = None):
         """
         Initialize the Bedrock fine-tuner.
         
         Args:
             region (Optional[str]): AWS region
+            
+        Raises:
+            FineTuneError: If initialization fails
         """
         self.region = region or settings.AWS_REGION
         
@@ -107,9 +198,38 @@ class BedrockFineTuner:
             logger.info(f"Initialized Bedrock fine-tuner in region {self.region}")
         except Exception as e:
             logger.error(f"Error initializing Bedrock fine-tuner: {str(e)}")
-            self.bedrock = None
-            self.bedrock_runtime = None
-            self.s3 = None
+            raise FineTuneError(f"Failed to initialize Bedrock fine-tuner: {str(e)}")
+    
+    def _retry_operation(self, operation: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """
+        Retry an operation with exponential backoff.
+        
+        Args:
+            operation (Callable[..., Any]): Operation to retry
+            *args: Positional arguments for the operation
+            **kwargs: Keyword arguments for the operation
+            
+        Returns:
+            Any: Result of the operation
+            
+        Raises:
+            FineTuneError: If operation fails after retries
+        """
+        last_error = None
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                return operation(*args, **kwargs)
+            except ClientError as e:
+                last_error = e
+                if attempt == self.MAX_RETRIES - 1:
+                    break
+                delay = self.RETRY_DELAY * (2 ** attempt)
+                logger.warning(f"Operation failed, retrying in {delay}s: {str(e)}")
+                time.sleep(delay)
+            except Exception as e:
+                raise FineTuneError(f"Operation failed: {str(e)}")
+        
+        raise FineTuneError(f"Operation failed after {self.MAX_RETRIES} attempts: {str(last_error)}")
     
     def is_initialized(self) -> bool:
         """
@@ -126,13 +246,17 @@ class BedrockFineTuner:
         
         Returns:
             List[Dict]: List of supported models
+            
+        Raises:
+            FineTuneError: If operation fails
         """
         if not self.is_initialized():
-            logger.error("Bedrock fine-tuner not initialized")
-            return []
+            raise FineTuneError("Bedrock fine-tuner not initialized")
             
         try:
-            response = self.bedrock.list_foundation_models()
+            response = self._retry_operation(
+                self.bedrock.list_foundation_models
+            )
             
             # Filter to only models supporting fine-tuning
             supported_models = []
@@ -150,7 +274,7 @@ class BedrockFineTuner:
             return supported_models
         except Exception as e:
             logger.error(f"Error listing supported models: {str(e)}")
-            return []
+            raise FineTuneError(f"Failed to list supported models: {str(e)}")
     
     def upload_training_file(self, file_path: str, bucket: str, key: str) -> bool:
         """
@@ -162,21 +286,28 @@ class BedrockFineTuner:
             key (str): S3 key (path)
             
         Returns:
-            bool: True if successful, False otherwise
+            bool: True if successful
+            
+        Raises:
+            FineTuneError: If operation fails
         """
         if not self.is_initialized():
-            logger.error("Bedrock fine-tuner not initialized")
-            return False
+            raise FineTuneError("Bedrock fine-tuner not initialized")
             
         try:
-            self.s3.upload_file(file_path, bucket, key)
+            self._retry_operation(
+                self.s3.upload_file,
+                file_path,
+                bucket,
+                key
+            )
             logger.info(f"Uploaded training file to s3://{bucket}/{key}")
             return True
         except Exception as e:
             logger.error(f"Error uploading training file: {str(e)}")
-            return False
+            raise FineTuneError(f"Failed to upload training file: {str(e)}")
     
-    def create_fine_tune_job(self, config: FineTuneConfig) -> Optional[FineTuneJob]:
+    def create_fine_tune_job(self, config: FineTuneConfig) -> FineTuneJob:
         """
         Create a fine-tuning job.
         
@@ -184,11 +315,14 @@ class BedrockFineTuner:
             config (FineTuneConfig): Fine-tuning configuration
             
         Returns:
-            Optional[FineTuneJob]: Fine-tuning job or None if failed
+            FineTuneJob: Fine-tuning job
+            
+        Raises:
+            ValidationError: If configuration is invalid
+            JobError: If job creation fails
         """
         if not self.is_initialized():
-            logger.error("Bedrock fine-tuner not initialized")
-            return None
+            raise FineTuneError("Bedrock fine-tuner not initialized")
             
         try:
             # Parse S3 paths
@@ -249,8 +383,14 @@ class BedrockFineTuner:
             if config.custom_model_name:
                 job_params["customModelName"] = config.custom_model_name
                 
+            if config.description:
+                job_params["description"] = config.description
+            
             # Create job
-            response = self.bedrock.create_model_customization_job(**job_params)
+            response = self._retry_operation(
+                self.bedrock.create_model_customization_job,
+                **job_params
+            )
             
             # Parse response
             job_id = response.get("jobArn").split("/")[-1]
@@ -268,11 +408,13 @@ class BedrockFineTuner:
             
             logger.info(f"Created fine-tuning job {job_id} for model {config.base_model_id}")
             return job
+        except ValidationError:
+            raise
         except Exception as e:
             logger.error(f"Error creating fine-tuning job: {str(e)}")
-            return None
+            raise JobError(f"Failed to create fine-tuning job: {str(e)}")
     
-    def get_job_status(self, job_id: str) -> Optional[FineTuneJob]:
+    def get_job_status(self, job_id: str) -> FineTuneJob:
         """
         Get the status of a fine-tuning job.
         
@@ -280,14 +422,17 @@ class BedrockFineTuner:
             job_id (str): Job ID
             
         Returns:
-            Optional[FineTuneJob]: Updated job information or None if failed
+            FineTuneJob: Updated job information
+            
+        Raises:
+            JobError: If operation fails
         """
         if not self.is_initialized():
-            logger.error("Bedrock fine-tuner not initialized")
-            return None
+            raise FineTuneError("Bedrock fine-tuner not initialized")
             
         try:
-            response = self.bedrock.get_model_customization_job(
+            response = self._retry_operation(
+                self.bedrock.get_model_customization_job,
                 jobIdentifier=job_id
             )
             
@@ -326,7 +471,7 @@ class BedrockFineTuner:
             return job
         except Exception as e:
             logger.error(f"Error getting job status: {str(e)}")
-            return None
+            raise JobError(f"Failed to get job status: {str(e)}")
     
     def stop_fine_tune_job(self, job_id: str) -> bool:
         """
@@ -336,14 +481,17 @@ class BedrockFineTuner:
             job_id (str): Job ID
             
         Returns:
-            bool: True if successful, False otherwise
+            bool: True if successful
+            
+        Raises:
+            JobError: If operation fails
         """
         if not self.is_initialized():
-            logger.error("Bedrock fine-tuner not initialized")
-            return False
+            raise FineTuneError("Bedrock fine-tuner not initialized")
             
         try:
-            self.bedrock.stop_model_customization_job(
+            self._retry_operation(
+                self.bedrock.stop_model_customization_job,
                 jobIdentifier=job_id
             )
             
@@ -351,7 +499,7 @@ class BedrockFineTuner:
             return True
         except Exception as e:
             logger.error(f"Error stopping fine-tuning job: {str(e)}")
-            return False
+            raise JobError(f"Failed to stop fine-tuning job: {str(e)}")
     
     def delete_custom_model(self, model_id: str) -> bool:
         """
@@ -361,14 +509,17 @@ class BedrockFineTuner:
             model_id (str): Custom model ID
             
         Returns:
-            bool: True if successful, False otherwise
+            bool: True if successful
+            
+        Raises:
+            ModelError: If operation fails
         """
         if not self.is_initialized():
-            logger.error("Bedrock fine-tuner not initialized")
-            return False
+            raise FineTuneError("Bedrock fine-tuner not initialized")
             
         try:
-            self.bedrock.delete_custom_model(
+            self._retry_operation(
+                self.bedrock.delete_custom_model,
                 modelIdentifier=model_id
             )
             
@@ -376,7 +527,7 @@ class BedrockFineTuner:
             return True
         except Exception as e:
             logger.error(f"Error deleting custom model: {str(e)}")
-            return False
+            raise ModelError(f"Failed to delete custom model: {str(e)}")
     
     def generate_jsonl_format(self, examples: List[Dict[str, str]], output_path: str) -> bool:
         """
@@ -387,18 +538,37 @@ class BedrockFineTuner:
             output_path (str): Path to save the JSONL file
             
         Returns:
-            bool: True if successful, False otherwise
+            bool: True if successful
+            
+        Raises:
+            ValidationError: If input is invalid
+            FineTuneError: If operation fails
         """
         try:
+            # Validate examples
+            for i, example in enumerate(examples):
+                if not isinstance(example, dict):
+                    raise ValidationError(f"Example {i} must be a dictionary")
+                if 'input' not in example:
+                    raise ValidationError(f"Example {i} missing 'input' key")
+                if 'output' not in example:
+                    raise ValidationError(f"Example {i} missing 'output' key")
+                if not isinstance(example['input'], str):
+                    raise ValidationError(f"Example {i} 'input' must be a string")
+                if not isinstance(example['output'], str):
+                    raise ValidationError(f"Example {i} 'output' must be a string")
+            
             with open(output_path, 'w') as f:
                 for example in examples:
                     f.write(json.dumps(example) + '\n')
                     
             logger.info(f"Generated JSONL file with {len(examples)} examples at {output_path}")
             return True
+        except ValidationError:
+            raise
         except Exception as e:
             logger.error(f"Error generating JSONL file: {str(e)}")
-            return False
+            raise FineTuneError(f"Failed to generate JSONL file: {str(e)}")
     
     def _parse_s3_path(self, s3_path: str) -> tuple:
         """
@@ -409,13 +579,19 @@ class BedrockFineTuner:
             
         Returns:
             tuple: (bucket, key)
-        """
-        if s3_path.startswith('s3://'):
-            path = s3_path[5:]
-        else:
-            path = s3_path
             
+        Raises:
+            ValidationError: If path is invalid
+        """
+        if not s3_path.startswith('s3://'):
+            raise ValidationError("S3 path must start with 's3://'")
+            
+        path = s3_path[5:]
         parts = path.split('/')
+        
+        if len(parts) < 2:
+            raise ValidationError("Invalid S3 path format")
+            
         bucket = parts[0]
         key = '/'.join(parts[1:])
         
@@ -432,7 +608,13 @@ class BedrockFineTuner:
             
         Returns:
             FineTuneConfig: Example configuration
+            
+        Raises:
+            ValidationError: If method is invalid
         """
+        if method not in ["standard", "lora", "combined"]:
+            raise ValidationError("Method must be 'standard', 'lora', or 'combined'")
+            
         # Base configuration
         config = FineTuneConfig(
             job_name=f"{method}-finetune-{int(time.time())}",

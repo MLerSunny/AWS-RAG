@@ -4,21 +4,28 @@ SharePoint connector for retrieving documents from SharePoint sites.
 import os
 import tempfile
 import concurrent.futures
-from typing import List, Dict, Optional, Any, Tuple, BinaryIO, Union, cast
+from typing import List, Dict, Optional, Any, Tuple, BinaryIO, TYPE_CHECKING, cast, Type, Union
+from datetime import datetime
+from exceptions import (
+    ConfigurationError, ProcessingError, ErrorCode,
+    FileOperationError
+)
 from ...utils.logger import setup_logger
-from ...config import settings
+from ...utils.common import execute_with_retry
 
-# Conditional imports to handle missing packages
-try:
-    from office365.runtime.auth.user_credential import UserCredential
+if TYPE_CHECKING:
+    from office365.runtime.auth.client_credential import ClientCredential
     from office365.sharepoint.client_context import ClientContext
-    from office365.sharepoint.files.file import File
-    have_office365 = True
+
+# Conditional import to handle missing package
+try:
+    from office365.runtime.auth.client_credential import ClientCredential
+    from office365.sharepoint.client_context import ClientContext
+    HAVE_OFFICE365 = True
 except ImportError:
-    have_office365 = False
-    UserCredential = None
+    ClientCredential = None
     ClientContext = None
-    File = None
+    HAVE_OFFICE365 = False
 
 logger = setup_logger(__name__)
 
@@ -31,63 +38,103 @@ class SharePointConnector:
         username: Optional[str] = None, 
         password: Optional[str] = None,
         max_workers: int = 4
-    ):
+    ) -> None:
         """
-        Initialize the SharePoint connector.
+        Initialize SharePoint connector.
         
         Args:
-            site_url (str): The SharePoint site URL
-            username (str): SharePoint username
-            password (str): SharePoint password
-            max_workers (int): Maximum number of parallel workers for batch operations
+            site_url: SharePoint site URL
+            username: SharePoint username
+            password: SharePoint password
+            max_workers: Maximum number of concurrent workers
+            
+        Raises:
+            ConfigurationError: If required configuration is missing
+            ImportError: If office365 package is not installed
         """
-        self.site_url = site_url or settings.SHAREPOINT_SITE_URL
-        self.username = username or settings.SHAREPOINT_USERNAME
-        self.password = password or settings.SHAREPOINT_PASSWORD
-        self.max_workers = max_workers
-        self.ctx = None
-        self._temp_files = []
+        if not HAVE_OFFICE365:
+            raise ImportError("office365 package is required but not installed")
+            
+        self.site_url = site_url or os.environ.get("SHAREPOINT_SITE_URL")
+        self.username = username or os.environ.get("SHAREPOINT_USERNAME")
+        self.password = password or os.environ.get("SHAREPOINT_PASSWORD")
         
         if not all([self.site_url, self.username, self.password]):
-            logger.warning("SharePoint credentials not fully configured")
-        else:
-            try:
-                # Check if Office365 packages are available
-                if not have_office365:
-                    logger.error("Office365 packages are not installed. Please install with 'pip install Office365-REST-Python-Client'")
-                    return
-                
-                # Initialize SharePoint client
-                if (UserCredential is not None and 
-                    ClientContext is not None and 
-                    isinstance(self.site_url, str) and 
-                    isinstance(self.username, str) and 
-                    isinstance(self.password, str)):
-                    
-                    user_credentials = UserCredential(self.username, self.password)
-                    self.ctx = ClientContext(self.site_url).with_credentials(user_credentials)
-                    logger.info(f"SharePoint client initialized for {self.site_url}")
-            except Exception as e:
-                logger.error(f"Error initializing SharePoint client: {str(e)}")
-                self.ctx = None
-    
-    def __enter__(self):
-        """Context manager entry method."""
-        return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """
-        Context manager exit method that cleans up resources.
+            raise ConfigurationError(
+                "Missing required SharePoint configuration",
+                context={
+                    'has_url': bool(self.site_url),
+                    'has_username': bool(self.username),
+                    'has_password': bool(self.password)
+                }
+            )
+            
+        self.max_workers = max_workers
+        self.ctx: Union[ClientContext, None] = None
+        self._temp_files: List[str] = []
+        self._last_connection: Optional[datetime] = None
+        self._connection_timeout = 3600  # 1 hour
         
-        Args:
-            exc_type: Exception type if an exception was raised
-            exc_val: Exception value if an exception was raised
-            exc_tb: Exception traceback if an exception was raised
+    def connect(self) -> None:
         """
+        Establish connection to SharePoint.
+        
+        Raises:
+            ProcessingError: If connection fails
+        """
+        if self.is_connected() and not self._is_connection_expired():
+            return
+            
+        if not self.site_url or not self.username or not self.password:
+            raise ProcessingError("Missing required SharePoint credentials")
+            
+        try:
+            if not HAVE_OFFICE365 or not ClientCredential or not ClientContext:
+                raise ImportError("Office365 packages are not installed")
+                
+            credentials = ClientCredential(self.username, self.password)
+            self.ctx = ClientContext(self.site_url).with_credentials(credentials)
+            self._last_connection = datetime.now()
+            logger.info(f"Connected to SharePoint site: {self.site_url}")
+        except Exception as e:
+            raise ProcessingError(
+                f"Failed to connect to SharePoint: {str(e)}",
+                context={'site_url': self.site_url},
+                cause=e
+            )
+            
+    def _is_connection_expired(self) -> bool:
+        """Check if the current connection has expired."""
+        if not self._last_connection:
+            return True
+        return (datetime.now() - self._last_connection).total_seconds() > self._connection_timeout
+        
+    def is_connected(self) -> bool:
+        """
+        Check if the connector is properly connected.
+        
+        Returns:
+            bool: True if connected, False otherwise
+        """
+        return self.ctx is not None
+        
+    def disconnect(self) -> None:
+        """Disconnect from SharePoint and clean up resources."""
+        self.ctx = None
+        self._last_connection = None
         self.cleanup()
-        return False  # Don't suppress exceptions
-    
-    def cleanup(self):
+        logger.info("Disconnected from SharePoint")
+        
+    def __enter__(self) -> 'SharePointConnector':
+        """Context manager entry."""
+        self.connect()
+        return self
+        
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Context manager exit."""
+        self.disconnect()
+        
+    def cleanup(self) -> None:
         """Clean up any temporary files created during operations."""
         for temp_file in self._temp_files:
             try:
@@ -98,177 +145,149 @@ class SharePointConnector:
                 logger.warning(f"Failed to clean up temporary file {temp_file}: {str(e)}")
         
         self._temp_files = []
-    
-    def is_connected(self) -> bool:
-        """
-        Check if the connector is properly initialized.
         
-        Returns:
-            bool: True if connected, False otherwise
-        """
-        return self.ctx is not None
-    
     def list_libraries(self) -> List[str]:
         """
         List available document libraries.
         
         Returns:
             List[str]: List of document library names
+            
+        Raises:
+            ProcessingError: If listing libraries fails
         """
         if not self.is_connected():
-            logger.error("SharePoint client not initialized")
-            return []
+            self.connect()
+            
+        if not self.ctx:
+            raise ProcessingError("SharePoint client not initialized")
             
         try:
-            # Get document libraries
-            if self.ctx and have_office365 and self.ctx.web:
-                lists = self.ctx.web.lists.filter("BaseTemplate eq 101").get().execute_query()
-                return [lib.title for lib in lists if lib.title]
-            return []
+            lists = self.ctx.web.lists.filter("BaseTemplate eq 101").get().execute_query()
+            return [lib.title for lib in lists if lib.title]
         except Exception as e:
-            logger.error(f"Error listing SharePoint libraries: {str(e)}")
-            return []
-    
+            raise ProcessingError(
+                f"Failed to list SharePoint libraries: {str(e)}",
+                context={'site_url': self.site_url},
+                cause=e
+            )
+            
     def list_documents(self, library_name: str, folder_path: str = "") -> List[Dict[str, Any]]:
         """
         List documents in a library/folder.
         
         Args:
-            library_name (str): Name of the document library
-            folder_path (str): Optional subfolder path
+            library_name: Name of the document library
+            folder_path: Optional subfolder path
             
         Returns:
             List[Dict]: List of document metadata
+            
+        Raises:
+            ProcessingError: If listing documents fails
         """
         if not self.is_connected():
-            logger.error("SharePoint client not initialized")
-            return []
+            self.connect()
+            
+        if not self.ctx:
+            raise ProcessingError("SharePoint client not initialized")
             
         try:
-            # Build folder path
-            if folder_path:
-                folder_url = f"{library_name}/{folder_path}"
-            else:
-                folder_url = library_name
-                
-            # Get folder and files
-            if self.ctx and have_office365 and self.ctx.web:
-                folder = self.ctx.web.get_folder_by_server_relative_url(folder_url)
-                files = folder.files.get().execute_query()
-                
-                # Format results
-                results = []
-                for file in files:
-                    created_time = None
-                    if file.time_created:
-                        created_time = file.time_created.strftime("%Y-%m-%d %H:%M:%S")
-                        
-                    modified_time = None
-                    if file.time_last_modified:
-                        modified_time = file.time_last_modified.strftime("%Y-%m-%d %H:%M:%S")
-                    
-                    results.append({
-                        "name": file.name,
-                        "url": file.serverRelativeUrl,
-                        "size": file.length,
-                        "created": created_time,
-                        "modified": modified_time
+            library = self.ctx.web.lists.get_by_title(library_name)
+            items = library.items.get().execute_query()
+            
+            documents = []
+            for item in items:
+                if item.properties.get('FSObjType') == 0:  # File
+                    documents.append({
+                        'name': item.properties.get('FileLeafRef'),
+                        'url': item.properties.get('FileRef'),
+                        'size': item.properties.get('File_x0020_Size'),
+                        'created': item.properties.get('Created'),
+                        'modified': item.properties.get('Modified')
                     })
-                
-                return results
-            return []
+            return documents
         except Exception as e:
-            logger.error(f"Error listing SharePoint documents: {str(e)}")
-            return []
-    
+            raise ProcessingError(
+                f"Failed to list documents in {library_name}: {str(e)}",
+                context={
+                    'library_name': library_name,
+                    'folder_path': folder_path
+                },
+                cause=e
+            )
+            
     def download_document(self, document_url: str) -> Tuple[Optional[BinaryIO], str]:
         """
         Download a document from SharePoint.
         
         Args:
-            document_url (str): The document URL
+            document_url: The document URL
             
         Returns:
             Tuple[Optional[BinaryIO], str]: Tuple of (file object, filename)
+            
+        Raises:
+            ProcessingError: If download fails
         """
         if not self.is_connected():
-            logger.error("SharePoint client not initialized")
-            return None, ""
+            self.connect()
+            
+        if not self.ctx:
+            raise ProcessingError("SharePoint client not initialized")
             
         try:
-            # Get file by server relative URL
-            if self.ctx and self.ctx.web:
-                file_obj = self.ctx.web.get_file_by_server_relative_url(document_url)
-                
-                # Create temporary file
-                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(document_url)[-1])
-                temp_file_path = temp_file.name
-                self._temp_files.append(temp_file_path)  # Track for cleanup
-                
-                # Download content
-                with open(temp_file_path, "wb") as local_file:
-                    file_obj.download(local_file).execute_query()
-                
-                # Return file object and filename
-                filename = os.path.basename(document_url)
-                
-                # Return the file opened in binary read mode and the filename
-                return open(temp_file_path, "rb"), filename
-            return None, ""
+            file_obj = self.ctx.web.get_file_by_server_relative_url(document_url)
+            
+            # Create temporary file
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(document_url)[-1])
+            temp_file_path = temp_file.name
+            self._temp_files.append(temp_file_path)  # Track for cleanup
+            
+            # Download content
+            with open(temp_file_path, "wb") as local_file:
+                file_obj.download(local_file).execute_query()
+            
+            # Return file object and filename
+            filename = os.path.basename(document_url)
+            return open(temp_file_path, "rb"), filename
+            
         except Exception as e:
-            logger.error(f"Error downloading SharePoint document: {str(e)}")
-            return None, ""
-    
+            raise ProcessingError(
+                f"Failed to download document {document_url}: {str(e)}",
+                context={'document_url': document_url},
+                cause=e
+            )
+            
     def _download_single_document(self, document_url: str) -> Tuple[Optional[BinaryIO], str]:
         """
-        Internal method to download a single document for parallel processing.
+        Download a single document with retry logic.
         
         Args:
-            document_url (str): The document URL
+            document_url: The document URL
             
         Returns:
             Tuple[Optional[BinaryIO], str]: Tuple of (file object, filename)
         """
-        try:
-            return self.download_document(document_url)
-        except Exception as e:
-            logger.error(f"Error in parallel download of {document_url}: {str(e)}")
-            return None, ""
-    
-    def batch_download(self, document_urls: List[str]) -> List[Tuple[Optional[BinaryIO], str]]:
+        return execute_with_retry(
+            lambda: self.download_document(document_url),
+            max_retries=3,
+            error_codes={ProcessingError: 1}  # Retry on any ProcessingError
+        )
+        
+    def download_documents(self, document_urls: List[str]) -> List[Tuple[Optional[BinaryIO], str]]:
         """
-        Download multiple documents from SharePoint in parallel.
+        Download multiple documents in parallel.
         
         Args:
-            document_urls (List[str]): List of document URLs
+            document_urls: List of document URLs
             
         Returns:
             List[Tuple[Optional[BinaryIO], str]]: List of (file object, filename) tuples
         """
-        if not document_urls:
-            return []
-        
-        # For small batches, just use sequential download
-        if len(document_urls) <= 2:
-            return [self.download_document(url) for url in document_urls]
-        
-        # For larger batches, use parallel processing
-        results = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            # Submit all download tasks
-            future_to_url = {
-                executor.submit(self._download_single_document, url): url 
+            futures = [
+                executor.submit(self._download_single_document, url)
                 for url in document_urls
-            }
-            
-            # Collect results as they complete
-            for future in concurrent.futures.as_completed(future_to_url):
-                url = future_to_url[future]
-                try:
-                    result = future.result()
-                    results.append(result)
-                except Exception as e:
-                    logger.error(f"Exception downloading {url}: {str(e)}")
-                    results.append((None, ""))
-        
-        return results 
+            ]
+            return [future.result() for future in concurrent.futures.as_completed(futures)] 

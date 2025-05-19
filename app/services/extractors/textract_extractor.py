@@ -1,44 +1,62 @@
 """
-Extract text from documents using AWS Textract service.
+AWS Textract service for document text extraction.
 """
-import boto3
 import os
-from ...config import settings
+import boto3
+from typing import Optional, Dict, Any, List
+from botocore.exceptions import ClientError
+from exceptions import AWSServiceError, ErrorCode, FileOperationError
 from ...utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
 class TextractExtractor:
-    def __init__(self, region_name=None):
+    """Service for extracting text from documents using AWS Textract."""
+    
+    def __init__(self, region_name: Optional[str] = None) -> None:
         """
-        Initialize the Textract extractor.
+        Initialize Textract client.
         
         Args:
-            region_name (str, optional): AWS region name, defaults to settings.AWS_REGION
+            region_name: Optional AWS region name
+            
+        Raises:
+            AWSServiceError: If client initialization fails
         """
-        region = region_name or settings.AWS_REGION
-        self.client = boto3.client(
-            'textract', 
-            region_name=region,
-            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY
-        )
-        logger.info(f"Initialized Textract extractor in region {region}")
+        try:
+            self.client = boto3.client('textract', region_name=region_name)
+        except Exception as e:
+            raise AWSServiceError(
+                'textract',
+                'initialization',
+                str(e),
+                ErrorCode.AWS_INIT_FAILED,
+                cause=e
+            )
     
-    def extract_text(self, file_path):
+    def extract_text(self, file_path: str) -> str:
         """
         Extract text from a document using Textract.
         
         Args:
-            file_path (str): Path to the document file
+            file_path: Path to the document file
             
         Returns:
             str: Extracted text content
+            
+        Raises:
+            FileOperationError: If file cannot be read
+            AWSServiceError: If Textract API call fails
         """
         try:
             # Check if file exists
             if not os.path.exists(file_path):
-                raise FileNotFoundError(f"File not found: {file_path}")
+                raise FileOperationError(
+                    'read',
+                    file_path,
+                    f"File not found: {file_path}",
+                    ErrorCode.FILE_NOT_FOUND
+                )
                 
             with open(file_path, 'rb') as file:
                 file_bytes = file.read()
@@ -54,11 +72,34 @@ class TextractExtractor:
                 if item["BlockType"] == "LINE":
                     text += item["Text"] + "\n"
             
-            logger.info(f"Successfully extracted text from {file_path} ({len(text)} characters)")
+            logger.info(
+                f"Successfully extracted text from {file_path}",
+                extra={
+                    'file_path': file_path,
+                    'text_length': len(text),
+                    'block_count': len(response["Blocks"])
+                }
+            )
             return text
-        except Exception as e:
-            logger.error(f"Error extracting text from {file_path}: {str(e)}")
+            
+        except FileOperationError:
             raise
+        except ClientError as e:
+            raise AWSServiceError(
+                'textract',
+                'detect_document_text',
+                str(e),
+                ErrorCode.AWS_OPERATION_FAILED,
+                cause=e
+            )
+        except Exception as e:
+            raise AWSServiceError(
+                'textract',
+                'extract_text',
+                str(e),
+                ErrorCode.PROCESSING_FAILED,
+                cause=e
+            )
     
     def extract_text_with_tables(self, file_path):
         """

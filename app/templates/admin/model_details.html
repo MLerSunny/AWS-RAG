@@ -5,24 +5,26 @@
 {% block content %}
 <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
     <h1 class="h2">
-        <a href="/admin/models" class="text-decoration-none">
+        <a href="/admin/models" class="text-decoration-none" aria-label="Return to Model Registry">
             <i class="bi bi-arrow-left me-2"></i>
         </a>
         {{ model.name }}
-        <span class="badge bg-primary">{{ model.type }}</span>
+        <span class="badge bg-primary" aria-label="Model type: {{ model.type }}">{{ model.type }}</span>
         {% if model.enabled %}
-        <span class="badge bg-success">Enabled</span>
+        <span class="badge bg-success" aria-label="Model is enabled">Enabled</span>
         {% else %}
-        <span class="badge bg-danger">Disabled</span>
+        <span class="badge bg-danger" aria-label="Model is disabled">Disabled</span>
         {% endif %}
     </h1>
     <div class="btn-toolbar mb-2 mb-md-0">
         <div class="btn-group me-2">
-            <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#editModelModal">
+            <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#editModelModal"
+                    aria-label="Edit model">
                 <i class="bi bi-pencil me-1"></i> Edit
             </button>
             <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteModelModal" 
-                    data-model-id="{{ model_id }}" data-model-name="{{ model.name }}">
+                    data-model-id="{{ model_id }}" data-model-name="{{ model.name }}"
+                    aria-label="Delete model">
                 <i class="bi bi-trash me-1"></i> Delete
             </button>
         </div>
@@ -35,16 +37,28 @@
             <div class="card-header">
                 <ul class="nav nav-tabs card-header-tabs" id="modelTabs" role="tablist">
                     <li class="nav-item" role="presentation">
-                        <button class="nav-link active" id="overview-tab" data-bs-toggle="tab" data-bs-target="#overview" type="button" role="tab" aria-controls="overview" aria-selected="true">Overview</button>
+                        <button class="nav-link active" id="overview-tab" data-bs-toggle="tab" data-bs-target="#overview" 
+                                type="button" role="tab" aria-controls="overview" aria-selected="true">
+                            <i class="bi bi-info-circle me-1"></i> Overview
+                        </button>
                     </li>
                     <li class="nav-item" role="presentation">
-                        <button class="nav-link" id="artifacts-tab" data-bs-toggle="tab" data-bs-target="#artifacts" type="button" role="tab" aria-controls="artifacts" aria-selected="false">Artifacts</button>
+                        <button class="nav-link" id="artifacts-tab" data-bs-toggle="tab" data-bs-target="#artifacts" 
+                                type="button" role="tab" aria-controls="artifacts" aria-selected="false">
+                            <i class="bi bi-box me-1"></i> Artifacts
+                        </button>
                     </li>
                     <li class="nav-item" role="presentation">
-                        <button class="nav-link" id="metrics-tab" data-bs-toggle="tab" data-bs-target="#metrics" type="button" role="tab" aria-controls="metrics" aria-selected="false">Metrics</button>
+                        <button class="nav-link" id="metrics-tab" data-bs-toggle="tab" data-bs-target="#metrics" 
+                                type="button" role="tab" aria-controls="metrics" aria-selected="false">
+                            <i class="bi bi-graph-up me-1"></i> Metrics
+                        </button>
                     </li>
                     <li class="nav-item" role="presentation">
-                        <button class="nav-link" id="approval-tab" data-bs-toggle="tab" data-bs-target="#approval" type="button" role="tab" aria-controls="approval" aria-selected="false">Approval</button>
+                        <button class="nav-link" id="approval-tab" data-bs-toggle="tab" data-bs-target="#approval" 
+                                type="button" role="tab" aria-controls="approval" aria-selected="false">
+                            <i class="bi bi-check-circle me-1"></i> Approval
+                        </button>
                     </li>
                 </ul>
             </div>
@@ -55,31 +69,43 @@
                         <h5 class="card-title">Model Information</h5>
                         <div class="row">
                             <div class="col-md-6">
-                                <table class="table table-striped">
+                                <table class="table table-striped" aria-label="Model details">
                                     <tbody>
                                         <tr>
-                                            <th style="width: 30%">ID</th>
+                                            <th scope="row" style="width: 30%">ID</th>
                                             <td>{{ model_id }}</td>
                                         </tr>
                                         <tr>
-                                            <th>Name</th>
+                                            <th scope="row">Name</th>
                                             <td>{{ model.name }}</td>
                                         </tr>
                                         <tr>
-                                            <th>Type</th>
+                                            <th scope="row">Type</th>
                                             <td>{{ model.type }}</td>
                                         </tr>
                                         <tr>
-                                            <th>Endpoint</th>
-                                            <td>{{ model.endpoint|default('Not specified') }}</td>
+                                            <th scope="row">Endpoint</th>
+                                            <td>
+                                                {% if model.endpoint %}
+                                                <a href="{{ model.endpoint }}" target="_blank" rel="noopener noreferrer">
+                                                    {{ model.endpoint }}
+                                                </a>
+                                                {% else %}
+                                                <span class="text-muted">Not specified</span>
+                                                {% endif %}
+                                            </td>
                                         </tr>
                                         <tr>
-                                            <th>Created</th>
-                                            <td>{{ model.created_at|default('N/A') }}</td>
+                                            <th scope="row">Created</th>
+                                            <td class="timestamp" data-timestamp="{{ model.created_at|default('N/A') }}">
+                                                {{ model.created_at|default('N/A') }}
+                                            </td>
                                         </tr>
                                         <tr>
-                                            <th>Last Updated</th>
-                                            <td>{{ model.updated_at|default('N/A') }}</td>
+                                            <th scope="row">Last Updated</th>
+                                            <td class="timestamp" data-timestamp="{{ model.updated_at|default('N/A') }}">
+                                                {{ model.updated_at|default('N/A') }}
+                                            </td>
                                         </tr>
                                     </tbody>
                                 </table>
@@ -106,22 +132,24 @@
                     <div class="tab-pane fade" id="artifacts" role="tabpanel" aria-labelledby="artifacts-tab">
                         <div class="d-flex justify-content-between align-items-center mb-3">
                             <h5 class="card-title">Model Artifacts</h5>
-                            <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#uploadArtifactModal">
+                            <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#uploadArtifactModal"
+                                    aria-label="Upload new artifact">
                                 <i class="bi bi-upload me-1"></i> Upload Artifact
                             </button>
                         </div>
                         
                         {% if artifacts %}
                         <div class="table-responsive">
-                            <table class="table table-hover">
+                            <table class="table table-hover" aria-label="Model artifacts">
                                 <thead>
                                     <tr>
-                                        <th>Version</th>
-                                        <th>Location</th>
-                                        <th>Format</th>
-                                        <th>Size</th>
-                                        <th>Framework</th>
-                                        <th>Created</th>
+                                        <th scope="col">Version</th>
+                                        <th scope="col">Location</th>
+                                        <th scope="col">Format</th>
+                                        <th scope="col">Size</th>
+                                        <th scope="col">Framework</th>
+                                        <th scope="col">Created</th>
+                                        <th scope="col">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -130,21 +158,37 @@
                                         <td>{{ artifact.version }}</td>
                                         <td>
                                             <a href="#" class="text-truncate d-inline-block" style="max-width: 250px;" 
-                                               title="{{ artifact.location }}">
+                                               title="{{ artifact.location }}" aria-label="View artifact at {{ artifact.location }}">
                                                 {{ artifact.location }}
                                             </a>
                                         </td>
                                         <td>{{ artifact.format|default('Unknown') }}</td>
                                         <td>{{ artifact.size_bytes|default('Unknown') }} bytes</td>
                                         <td>{{ artifact.framework|default('Not specified') }}</td>
-                                        <td>{{ artifact.created_at|default('N/A') }}</td>
+                                        <td class="timestamp" data-timestamp="{{ artifact.created_at|default('N/A') }}">
+                                            {{ artifact.created_at|default('N/A') }}
+                                        </td>
+                                        <td>
+                                            <div class="btn-group" role="group" aria-label="Artifact actions">
+                                                <button type="button" class="btn btn-sm btn-outline-primary" 
+                                                        onclick="downloadArtifact('{{ artifact.id }}')"
+                                                        aria-label="Download artifact">
+                                                    <i class="bi bi-download"></i>
+                                                </button>
+                                                <button type="button" class="btn btn-sm btn-outline-danger" 
+                                                        onclick="deleteArtifact('{{ artifact.id }}')"
+                                                        aria-label="Delete artifact">
+                                                    <i class="bi bi-trash"></i>
+                                                </button>
+                                            </div>
+                                        </td>
                                     </tr>
                                     {% endfor %}
                                 </tbody>
                             </table>
                         </div>
                         {% else %}
-                        <div class="alert alert-info">
+                        <div class="alert alert-info" role="alert">
                             <i class="bi bi-info-circle me-2"></i> No artifacts have been uploaded for this model.
                         </div>
                         {% endif %}
@@ -154,7 +198,8 @@
                     <div class="tab-pane fade" id="metrics" role="tabpanel" aria-labelledby="metrics-tab">
                         <div class="d-flex justify-content-between align-items-center mb-3">
                             <h5 class="card-title">Performance Metrics</h5>
-                            <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addMetricModal">
+                            <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addMetricModal"
+                                    aria-label="Add new metric">
                                 <i class="bi bi-graph-up me-1"></i> Add Metric
                             </button>
                         </div>
@@ -174,14 +219,18 @@
                                         {% if metric.description %}
                                         <p class="card-text">{{ metric.description }}</p>
                                         {% endif %}
-                                        <div class="text-muted small">Recorded on: {{ metric.timestamp|default('N/A') }}</div>
+                                        <div class="text-muted small">Recorded on: 
+                                            <span class="timestamp" data-timestamp="{{ metric.timestamp|default('N/A') }}">
+                                                {{ metric.timestamp|default('N/A') }}
+                                            </span>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
                             {% endfor %}
                         </div>
                         {% else %}
-                        <div class="alert alert-info">
+                        <div class="alert alert-info" role="alert">
                             <i class="bi bi-info-circle me-2"></i> No metrics have been recorded for this model.
                         </div>
                         {% endif %}
@@ -203,11 +252,12 @@
                                             <span class="badge fs-6 p-2 {% if model.approval_status == 'approved' %}bg-success
                                                                          {% elif model.approval_status == 'rejected' %}bg-danger
                                                                          {% elif model.approval_status == 'in_review' %}bg-warning
-                                                                         {% else %}bg-secondary{% endif %}">
+                                                                         {% else %}bg-secondary{% endif %}"
+                                                  aria-label="Current approval status: {{ model.approval_status|title }}">
                                                 {{ model.approval_status|title }}
                                             </span>
                                             {% else %}
-                                            <span class="badge fs-6 p-2 bg-secondary">Pending</span>
+                                            <span class="badge fs-6 p-2 bg-secondary" aria-label="Current approval status: Pending">Pending</span>
                                             {% endif %}
                                         </div>
                                         
@@ -216,7 +266,11 @@
                                         {% endif %}
                                         
                                         {% if model.approval_timestamp %}
-                                        <p><strong>Last updated:</strong> {{ model.approval_timestamp }}</p>
+                                        <p><strong>Last updated:</strong> 
+                                            <span class="timestamp" data-timestamp="{{ model.approval_timestamp }}">
+                                                {{ model.approval_timestamp }}
+                                            </span>
+                                        </p>
                                         {% endif %}
                                         
                                         {% if model.approval_comments %}
@@ -227,9 +281,11 @@
                                     
                                     <div class="col-md-6">
                                         <h6>Update Status</h6>
-                                        <form action="/admin/models/{{ model_id }}/update" method="post">
+                                        <form id="approvalForm" action="/admin/models/{{ model_id }}/update" method="post" class="needs-validation" novalidate>
                                             <div class="mb-3">
-                                                <select class="form-select" name="approval_status" required>
+                                                <label for="approval_status" class="form-label">Status</label>
+                                                <select class="form-select" id="approval_status" name="approval_status" required
+                                                        aria-describedby="statusHelp">
                                                     <option value="" disabled selected>Select status</option>
                                                     {% for status in approval_statuses %}
                                                     <option value="{{ status }}" {% if model.approval_status == status %}selected{% endif %}>
@@ -237,11 +293,25 @@
                                                     </option>
                                                     {% endfor %}
                                                 </select>
+                                                <div id="statusHelp" class="form-text">Select the new approval status</div>
+                                                <div class="invalid-feedback">
+                                                    Please select an approval status
+                                                </div>
                                             </div>
                                             <div class="mb-3">
-                                                <textarea class="form-control" name="approval_comments" rows="3" placeholder="Approval comments...">{{ model.approval_comments|default('') }}</textarea>
+                                                <label for="approval_comments" class="form-label">Comments</label>
+                                                <textarea class="form-control" id="approval_comments" name="approval_comments" 
+                                                          rows="3" placeholder="Approval comments..." maxlength="500"
+                                                          aria-describedby="commentsHelp">{{ model.approval_comments|default('') }}</textarea>
+                                                <div id="commentsHelp" class="form-text">Add any relevant comments about the approval decision (max 500 characters)</div>
+                                                <div class="invalid-feedback">
+                                                    Comments cannot exceed 500 characters
+                                                </div>
                                             </div>
-                                            <button type="submit" class="btn btn-primary">Update Approval Status</button>
+                                            <button type="submit" class="btn btn-primary">
+                                                <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                                                Update Approval Status
+                                            </button>
                                         </form>
                                     </div>
                                 </div>
@@ -263,21 +333,39 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
-                <form id="editModelForm" action="/admin/models/{{ model_id }}/update" method="post">
+                <form id="editModelForm" action="/admin/models/{{ model_id }}/edit" method="post" class="needs-validation" novalidate>
                     <div class="mb-3">
-                        <label for="edit_name" class="form-label">Model Name</label>
-                        <input type="text" class="form-control" id="edit_name" name="name" value="{{ model.name }}">
+                        <label for="edit_name" class="form-label">Model Name *</label>
+                        <input type="text" class="form-control" id="edit_name" name="name" required
+                               value="{{ model.name }}" minlength="3" maxlength="100"
+                               aria-describedby="editNameHelp">
+                        <div id="editNameHelp" class="form-text">Display name for the model (3-100 characters)</div>
+                        <div class="invalid-feedback">
+                            Please enter a valid model name (3-100 characters)
+                        </div>
                     </div>
                     <div class="mb-3">
                         <label for="edit_endpoint" class="form-label">Endpoint URL</label>
-                        <input type="text" class="form-control" id="edit_endpoint" name="endpoint" value="{{ model.endpoint|default('') }}">
+                        <input type="url" class="form-control" id="edit_endpoint" name="endpoint"
+                               value="{{ model.endpoint|default('') }}" pattern="https?://.+"
+                               aria-describedby="editEndpointHelp">
+                        <div id="editEndpointHelp" class="form-text">API endpoint URL for this model (if applicable)</div>
+                        <div class="invalid-feedback">
+                            Please enter a valid URL (starting with http:// or https://)
+                        </div>
                     </div>
                     <div class="mb-3">
                         <label for="edit_description" class="form-label">Description</label>
-                        <textarea class="form-control" id="edit_description" name="description" rows="3">{{ model.description|default('') }}</textarea>
+                        <textarea class="form-control" id="edit_description" name="description" rows="3"
+                                  maxlength="500" aria-describedby="editDescriptionHelp">{{ model.description|default('') }}</textarea>
+                        <div id="editDescriptionHelp" class="form-text">Brief description of the model (max 500 characters)</div>
+                        <div class="invalid-feedback">
+                            Description cannot exceed 500 characters
+                        </div>
                     </div>
                     <div class="form-check mb-3">
-                        <input class="form-check-input" type="checkbox" id="edit_enabled" name="enabled" {% if model.enabled %}checked{% endif %}>
+                        <input class="form-check-input" type="checkbox" id="edit_enabled" name="enabled"
+                               {% if model.enabled %}checked{% endif %}>
                         <label class="form-check-label" for="edit_enabled">
                             Enabled
                         </label>
@@ -286,7 +374,10 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="submit" form="editModelForm" class="btn btn-primary">Save Changes</button>
+                <button type="submit" form="editModelForm" class="btn btn-primary">
+                    <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                    Save Changes
+                </button>
             </div>
         </div>
     </div>
@@ -301,13 +392,20 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
+                <div class="alert alert-warning" role="alert">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    <strong>Warning:</strong> This action cannot be undone.
+                </div>
                 <p>Are you sure you want to delete the model <strong id="deleteModelName"></strong>?</p>
-                <p class="text-danger">This action cannot be undone. All metrics, artifacts, and other data associated with this model will be deleted.</p>
+                <p class="text-danger">All metrics, artifacts, and other data associated with this model will be deleted.</p>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <form id="deleteModelForm" action="/admin/models/{{ model_id }}/delete" method="post">
-                    <button type="submit" class="btn btn-danger">Delete Model</button>
+                <form id="deleteModelForm" action="" method="post">
+                    <button type="submit" class="btn btn-danger">
+                        <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                        Delete Model
+                    </button>
                 </form>
             </div>
         </div>
@@ -319,34 +417,49 @@
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title" id="uploadArtifactModalLabel">Upload Model Artifact</h5>
+                <h5 class="modal-title" id="uploadArtifactModalLabel">Upload Artifact</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
-                <form id="uploadArtifactForm" action="/admin/models/{{ model_id }}/upload-artifact" method="post" enctype="multipart/form-data">
-                    <div class="mb-3">
-                        <label for="version" class="form-label">Version *</label>
-                        <input type="text" class="form-control" id="version" name="version" required>
-                        <div class="form-text">Version identifier (e.g., "v1.0.0")</div>
-                    </div>
-                    <div class="mb-3">
-                        <label for="framework" class="form-label">Framework</label>
-                        <input type="text" class="form-control" id="framework" name="framework">
-                        <div class="form-text">Model framework (e.g., "PyTorch", "TensorFlow")</div>
-                    </div>
-                    <div class="mb-3">
-                        <label for="description" class="form-label">Description</label>
-                        <textarea class="form-control" id="description" name="description" rows="2"></textarea>
-                    </div>
+                <form id="uploadArtifactForm" action="/admin/models/{{ model_id }}/artifacts/upload" method="post" 
+                      enctype="multipart/form-data" class="needs-validation" novalidate>
                     <div class="mb-3">
                         <label for="artifact_file" class="form-label">Artifact File *</label>
-                        <input type="file" class="form-control" id="artifact_file" name="artifact_file" required>
+                        <input type="file" class="form-control" id="artifact_file" name="artifact_file" required
+                               accept=".pt,.pth,.h5,.onnx,.pb,.tflite,.mlmodel"
+                               aria-describedby="artifactFileHelp">
+                        <div id="artifactFileHelp" class="form-text">
+                            Supported formats: PyTorch (.pt, .pth), TensorFlow (.h5, .pb), ONNX (.onnx), TFLite (.tflite), CoreML (.mlmodel)
+                        </div>
+                        <div class="invalid-feedback">
+                            Please select a valid artifact file
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="artifact_version" class="form-label">Version *</label>
+                        <input type="text" class="form-control" id="artifact_version" name="version" required
+                               pattern="^[0-9]+\.[0-9]+\.[0-9]+$" placeholder="e.g., 1.0.0"
+                               aria-describedby="versionHelp">
+                        <div id="versionHelp" class="form-text">Version number in semantic versioning format (e.g., 1.0.0)</div>
+                        <div class="invalid-feedback">
+                            Please enter a valid version number (e.g., 1.0.0)
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="artifact_framework" class="form-label">Framework</label>
+                        <input type="text" class="form-control" id="artifact_framework" name="framework"
+                               placeholder="e.g., PyTorch, TensorFlow, ONNX"
+                               aria-describedby="frameworkHelp">
+                        <div id="frameworkHelp" class="form-text">Framework used to create the model (optional)</div>
                     </div>
                 </form>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="submit" form="uploadArtifactForm" class="btn btn-primary">Upload</button>
+                <button type="submit" form="uploadArtifactForm" class="btn btn-primary">
+                    <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                    Upload Artifact
+                </button>
             </div>
         </div>
     </div>
@@ -357,40 +470,75 @@
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title" id="addMetricModalLabel">Add Performance Metric</h5>
+                <h5 class="modal-title" id="addMetricModalLabel">Add Metric</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
-                <form id="addMetricForm" action="/admin/models/{{ model_id }}/record-metric" method="post">
+                <form id="addMetricForm" action="/admin/models/{{ model_id }}/metrics/add" method="post" class="needs-validation" novalidate>
                     <div class="mb-3">
                         <label for="metric_name" class="form-label">Metric Name *</label>
-                        <input type="text" class="form-control" id="metric_name" name="name" required>
-                        <div class="form-text">Name of the metric (e.g., "Accuracy", "Latency")</div>
+                        <input type="text" class="form-control" id="metric_name" name="name" required
+                               minlength="3" maxlength="50" pattern="^[a-zA-Z0-9_]+$"
+                               aria-describedby="metricNameHelp">
+                        <div id="metricNameHelp" class="form-text">
+                            Name of the metric (3-50 characters, alphanumeric and underscores only)
+                        </div>
+                        <div class="invalid-feedback">
+                            Please enter a valid metric name
+                        </div>
                     </div>
                     <div class="mb-3">
                         <label for="metric_value" class="form-label">Value *</label>
-                        <input type="text" class="form-control" id="metric_value" name="value" required>
-                        <div class="form-text">Metric value (e.g., "0.95", "250ms")</div>
+                        <input type="number" class="form-control" id="metric_value" name="value" required
+                               step="any" min="0"
+                               aria-describedby="metricValueHelp">
+                        <div id="metricValueHelp" class="form-text">Numeric value of the metric</div>
+                        <div class="invalid-feedback">
+                            Please enter a valid numeric value
+                        </div>
                     </div>
                     <div class="mb-3">
-                        <label for="metric_type" class="form-label">Metric Type *</label>
-                        <input type="text" class="form-control" id="metric_type" name="metric_type" required>
-                        <div class="form-text">Type of metric (e.g., "accuracy", "performance", "latency")</div>
+                        <label for="metric_type" class="form-label">Type *</label>
+                        <select class="form-select" id="metric_type" name="type" required
+                                aria-describedby="metricTypeHelp">
+                            <option value="" disabled selected>Select type</option>
+                            <option value="accuracy">Accuracy</option>
+                            <option value="precision">Precision</option>
+                            <option value="recall">Recall</option>
+                            <option value="f1">F1 Score</option>
+                            <option value="latency">Latency</option>
+                            <option value="throughput">Throughput</option>
+                            <option value="custom">Custom</option>
+                        </select>
+                        <div id="metricTypeHelp" class="form-text">Type of metric</div>
+                        <div class="invalid-feedback">
+                            Please select a metric type
+                        </div>
                     </div>
                     <div class="mb-3">
                         <label for="metric_dataset" class="form-label">Dataset</label>
-                        <input type="text" class="form-control" id="metric_dataset" name="dataset">
-                        <div class="form-text">Dataset used for measurement (if applicable)</div>
+                        <input type="text" class="form-control" id="metric_dataset" name="dataset"
+                               placeholder="e.g., test, validation"
+                               aria-describedby="metricDatasetHelp">
+                        <div id="metricDatasetHelp" class="form-text">Dataset used for evaluation (optional)</div>
                     </div>
                     <div class="mb-3">
                         <label for="metric_description" class="form-label">Description</label>
-                        <textarea class="form-control" id="metric_description" name="description" rows="2"></textarea>
+                        <textarea class="form-control" id="metric_description" name="description" rows="3"
+                                  maxlength="500" aria-describedby="metricDescriptionHelp"></textarea>
+                        <div id="metricDescriptionHelp" class="form-text">Brief description of the metric (max 500 characters)</div>
+                        <div class="invalid-feedback">
+                            Description cannot exceed 500 characters
+                        </div>
                     </div>
                 </form>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="submit" form="addMetricForm" class="btn btn-primary">Add Metric</button>
+                <button type="submit" form="addMetricForm" class="btn btn-primary">
+                    <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                    Add Metric
+                </button>
             </div>
         </div>
     </div>
@@ -399,34 +547,163 @@
 
 {% block extra_js %}
 <script>
-    // Set up delete modal
-    document.getElementById('deleteModelModal').addEventListener('show.bs.modal', function (event) {
-        let button = event.relatedTarget;
-        let modelName = button.getAttribute('data-model-name');
-        document.getElementById('deleteModelName').textContent = modelName;
-    });
-    
     // Format timestamps
     document.addEventListener('DOMContentLoaded', function() {
         const formatTimestamp = (timestamp) => {
-            if (!timestamp) return 'N/A';
+            if (!timestamp || timestamp === 'N/A') return 'N/A';
             
-            // Check if timestamp is a unix timestamp (number)
-            if (!isNaN(timestamp)) {
-                const date = new Date(timestamp * 1000);
-                return date.toLocaleString();
+            try {
+                // Check if timestamp is a unix timestamp (number)
+                if (!isNaN(timestamp)) {
+                    const date = new Date(timestamp * 1000);
+                    return date.toLocaleString();
+                }
+                
+                // Try parsing as ISO string
+                const date = new Date(timestamp);
+                if (!isNaN(date.getTime())) {
+                    return date.toLocaleString();
+                }
+                
+                return timestamp;
+            } catch (error) {
+                console.error('Error formatting timestamp:', error);
+                return timestamp;
             }
-            
-            return timestamp;
         };
         
-        // Format created_at and updated_at timestamps
-        const timestampElements = document.querySelectorAll('td:contains("created_at"), td:contains("updated_at")');
+        // Format timestamps
+        const timestampElements = document.querySelectorAll('.timestamp');
         timestampElements.forEach(el => {
-            if (el.textContent && !isNaN(el.textContent.trim())) {
-                el.textContent = formatTimestamp(parseInt(el.textContent.trim()));
+            const timestamp = el.getAttribute('data-timestamp');
+            if (timestamp && timestamp !== 'N/A') {
+                el.textContent = formatTimestamp(timestamp);
             }
         });
+        
+        // Form validation
+        const forms = document.querySelectorAll('.needs-validation');
+        Array.from(forms).forEach(form => {
+            form.addEventListener('submit', event => {
+                if (!form.checkValidity()) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                }
+                
+                form.classList.add('was-validated');
+            }, false);
+        });
+        
+        // Set up delete modal
+        document.getElementById('deleteModelModal').addEventListener('show.bs.modal', function (event) {
+            let button = event.relatedTarget;
+            let modelId = button.getAttribute('data-model-id');
+            let modelName = button.getAttribute('data-model-name');
+            
+            document.getElementById('deleteModelName').textContent = modelName;
+            document.getElementById('deleteModelForm').action = `/admin/models/${modelId}/delete`;
+        });
+        
+        // Form submission handling
+        const handleFormSubmit = (form, successMessage) => {
+            form.addEventListener('submit', function(event) {
+                event.preventDefault();
+                
+                if (!validateForm(this)) {
+                    return;
+                }
+                
+                const submitButton = this.querySelector('button[type="submit"]');
+                const spinner = submitButton.querySelector('.spinner-border');
+                
+                submitButton.disabled = true;
+                spinner.classList.remove('d-none');
+                
+                fetch(this.action, {
+                    method: 'POST',
+                    body: new FormData(this)
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        showToast(successMessage, 'success');
+                        setTimeout(() => window.location.reload(), 1000);
+                    } else {
+                        showToast(data.message || 'Operation failed', 'danger');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    showToast('An error occurred', 'danger');
+                })
+                .finally(() => {
+                    submitButton.disabled = false;
+                    spinner.classList.add('d-none');
+                });
+            });
+        };
+        
+        // Set up form submissions
+        handleFormSubmit(document.getElementById('editModelForm'), 'Model updated successfully');
+        handleFormSubmit(document.getElementById('deleteModelForm'), 'Model deleted successfully');
+        handleFormSubmit(document.getElementById('uploadArtifactForm'), 'Artifact uploaded successfully');
+        handleFormSubmit(document.getElementById('addMetricForm'), 'Metric added successfully');
+        handleFormSubmit(document.getElementById('approvalForm'), 'Approval status updated successfully');
     });
+    
+    // Artifact actions
+    function downloadArtifact(artifactId) {
+        showLoading();
+        fetch(`/admin/models/{{ model_id }}/artifacts/${artifactId}/download`)
+            .then(response => {
+                if (!response.ok) throw new Error('Download failed');
+                return response.blob();
+            })
+            .then(blob => {
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `artifact-${artifactId}`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+                showToast('Artifact downloaded successfully', 'success');
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showToast('Failed to download artifact', 'danger');
+            })
+            .finally(() => {
+                hideLoading();
+            });
+    }
+    
+    function deleteArtifact(artifactId) {
+        if (!confirm('Are you sure you want to delete this artifact?')) {
+            return;
+        }
+        
+        showLoading();
+        fetch(`/admin/models/{{ model_id }}/artifacts/${artifactId}/delete`, {
+            method: 'POST'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast('Artifact deleted successfully', 'success');
+                setTimeout(() => window.location.reload(), 1000);
+            } else {
+                showToast(data.message || 'Failed to delete artifact', 'danger');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showToast('An error occurred while deleting the artifact', 'danger');
+        })
+        .finally(() => {
+            hideLoading();
+        });
+    }
 </script>
 {% endblock %} 

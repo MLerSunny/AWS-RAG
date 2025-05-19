@@ -1,5 +1,5 @@
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, BackgroundTasks
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, BackgroundTasks, Request
+from pydantic import BaseModel, Field, validator
 from typing import List, Optional, Dict, Any
 import io
 import PyPDF2
@@ -10,15 +10,22 @@ from ..services.chunker import Chunker
 from ..services.embedder import Embedder
 from ..services.opensearch_client import OpenSearchClient
 from ..utils.logger import setup_logger
+from ..utils.validation import validate_filename
+from ..utils.cache import Cache
+import time
 
 router = APIRouter()
 logger = setup_logger(__name__)
+
+# Initialize cache for document processing status
+cache = Cache(ttl=3600)  # 1 hour TTL
 
 class IngestResponse(BaseModel):
     message: str
     document_id: str
     chunks_processed: int
     success: bool
+    processing_time: float
 
 class BatchIngestResponse(BaseModel):
     message: str
@@ -26,37 +33,56 @@ class BatchIngestResponse(BaseModel):
     total_chunks_processed: int
     success: bool
     failed_documents: List[str] = []
+    processing_time: float
+
+def validate_file_type(filename: str) -> bool:
+    """Validate file type."""
+    allowed_extensions = {'.pdf', '.docx', '.txt'}
+    _, ext = os.path.splitext(filename.lower())
+    return ext in allowed_extensions
 
 def extract_text_from_file(file_content: bytes, filename: str) -> str:
     """Extract text based on file type."""
+    if not validate_file_type(filename):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type. Allowed types: PDF, DOCX, TXT"
+        )
+    
     # Get file extension
     _, file_extension = os.path.splitext(filename)
     file_extension = file_extension.lower()
     
-    # Process based on file type
-    if file_extension == '.pdf':
-        # Handle PDF
-        with io.BytesIO(file_content) as pdf_file:
-            pdf_reader = PyPDF2.PdfReader(pdf_file)
-            text = ''
-            for page in pdf_reader.pages:
-                text += page.extract_text() + '\n'
-            return text
-    elif file_extension == '.docx':
-        # Handle DOCX
-        with io.BytesIO(file_content) as docx_file:
-            doc = Document(docx_file)
-            text = '\n'.join([paragraph.text for paragraph in doc.paragraphs])
-            return text
-    elif file_extension == '.txt':
-        # Handle TXT
-        return file_content.decode('utf-8')
-    else:
-        # For unknown types, attempt to decode as text
-        try:
+    try:
+        # Process based on file type
+        if file_extension == '.pdf':
+            # Handle PDF
+            with io.BytesIO(file_content) as pdf_file:
+                pdf_reader = PyPDF2.PdfReader(pdf_file)
+                text = ''
+                for page in pdf_reader.pages:
+                    text += page.extract_text() + '\n'
+                return text
+        elif file_extension == '.docx':
+            # Handle DOCX
+            with io.BytesIO(file_content) as docx_file:
+                doc = Document(docx_file)
+                text = '\n'.join([paragraph.text for paragraph in doc.paragraphs])
+                return text
+        elif file_extension == '.txt':
+            # Handle TXT
             return file_content.decode('utf-8')
-        except UnicodeDecodeError:
-            raise ValueError(f"Unsupported file type: {file_extension}")
+        else:
+            # This should never happen due to validate_file_type check
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported file type: {file_extension}"
+            )
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Error processing file {filename}: {str(e)}"
+        )
 
 async def process_document_async(
     content: bytes, 
@@ -65,7 +91,16 @@ async def process_document_async(
     metadata: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """Process a document asynchronously and return results."""
+    start_time = time.time()
+    
     try:
+        # Validate filename
+        if not validate_filename(filename):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid filename: {filename}"
+            )
+        
         # Extract text based on file type
         content_str = extract_text_from_file(content, filename)
         
@@ -89,7 +124,8 @@ async def process_document_async(
                 "success": False,
                 "document_id": document["id"],
                 "chunks_processed": 0,
-                "error": "No chunks were generated from the document"
+                "error": "No chunks were generated from the document",
+                "processing_time": time.time() - start_time
             }
         
         # Generate embeddings and index chunks
@@ -126,16 +162,20 @@ async def process_document_async(
             "success": successful_chunks > 0,
             "document_id": doc_id,
             "chunks_processed": successful_chunks,
-            "total_chunks": total_chunks
+            "total_chunks": total_chunks,
+            "processing_time": time.time() - start_time
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error processing document {filename}: {str(e)}")
         return {
             "success": False,
             "document_id": document_id or filename,
             "chunks_processed": 0,
-            "error": str(e)
+            "error": str(e),
+            "processing_time": time.time() - start_time
         }
 
 @router.post("/ingest", response_model=IngestResponse)
@@ -145,6 +185,8 @@ async def ingest_document(
     metadata: Optional[str] = Form(None),
     background_tasks: BackgroundTasks = BackgroundTasks()
 ):
+    start_time = time.time()
+    
     try:
         # Parse metadata if provided
         meta_dict = {}
@@ -182,9 +224,12 @@ async def ingest_document(
             message=f"Successfully ingested document: {file.filename}",
             document_id=result["document_id"],
             chunks_processed=result["chunks_processed"],
-            success=True
+            success=True,
+            processing_time=result["processing_time"]
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error ingesting document: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -194,6 +239,8 @@ async def batch_ingest_documents(
     files: List[UploadFile] = File(...),
     metadata: Optional[str] = Form(None)
 ):
+    start_time = time.time()
+    
     try:
         # Parse metadata if provided
         meta_dict = {}
@@ -251,7 +298,8 @@ async def batch_ingest_documents(
             documents_processed=total_documents,
             total_chunks_processed=total_chunks,
             success=success,
-            failed_documents=failed_documents
+            failed_documents=failed_documents,
+            processing_time=time.time() - start_time
         )
         
     except Exception as e:

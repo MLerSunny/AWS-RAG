@@ -4,29 +4,44 @@ Common utility functions shared across multiple modules.
 import time
 import math
 import logging
-from typing import Any, Dict, Callable, Optional
+from typing import Any, Dict, Callable, Optional, TypeVar, Union
 from functools import wraps
+from ...exceptions import ErrorCode, ProcessingError
+import random
 
 # Setup logger
 logger = logging.getLogger(__name__)
 
-def execute_with_retry(operation_func: Callable, *args, max_retries: int = 3, 
-                      retry_delay: float = 1.0, **kwargs) -> Any:
+T = TypeVar('T')
+
+def execute_with_retry(
+    operation_func: Callable[..., T],
+    *args,
+    max_retries: int = 3,
+    retry_delay: float = 1.0,
+    error_codes: Optional[Dict[type, int]] = None,
+    **kwargs
+) -> T:
     """
-    Execute an operation with retry logic.
+    Execute an operation with retry logic and enhanced error handling.
     
     Args:
         operation_func: Function to execute
         *args: Arguments to pass to the function
         max_retries: Maximum number of retry attempts
         retry_delay: Base delay between retries (seconds)
+        error_codes: Optional mapping of exception types to error codes
         **kwargs: Keyword arguments to pass to the function
         
     Returns:
-        Any: Result of the operation function
+        T: Result of the operation function
+        
+    Raises:
+        ProcessingError: If operation fails after all retries
     """
     retries = 0
     last_exception = None
+    error_codes = error_codes or {}
     
     while retries <= max_retries:
         try:
@@ -36,14 +51,31 @@ def execute_with_retry(operation_func: Callable, *args, max_retries: int = 3,
             retries += 1
             
             if retries <= max_retries:
-                # Exponential backoff
-                sleep_time = retry_delay * (2 ** (retries - 1))
-                logger.warning(f"Operation failed, retrying in {sleep_time:.2f}s ({retries}/{max_retries}): {str(e)}")
+                # Exponential backoff with jitter
+                sleep_time = retry_delay * (2 ** (retries - 1)) * (0.5 + random.random())
+                logger.warning(
+                    f"Operation failed, retrying in {sleep_time:.2f}s ({retries}/{max_retries}): {str(e)}",
+                    extra={
+                        'operation': operation_func.__name__,
+                        'retry_count': retries,
+                        'max_retries': max_retries,
+                        'error': str(e)
+                    }
+                )
                 time.sleep(sleep_time)
     
-    # If we've exhausted retries, log and re-raise the last exception
-    logger.error(f"Operation failed after {max_retries} retries: {str(last_exception)}")
-    return None
+    # If we've exhausted retries, raise a ProcessingError
+    error_code = error_codes.get(type(last_exception), ErrorCode.PROCESSING_FAILED)
+    raise ProcessingError(
+        f"Operation failed after {max_retries} retries: {str(last_exception)}",
+        context={
+            'operation': operation_func.__name__,
+            'retry_count': retries,
+            'max_retries': max_retries,
+            'error': str(last_exception)
+        },
+        cause=last_exception
+    )
 
 def retry_decorator(max_retries: int = 3, retry_delay: float = 1.0):
     """

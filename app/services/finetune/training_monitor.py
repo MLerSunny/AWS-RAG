@@ -8,12 +8,29 @@ import math
 import time
 import logging
 import statistics
-from typing import Dict, List, Tuple, Any, Optional, Callable
+from typing import Dict, List, Tuple, Any, Optional, Callable, Union, TypeVar, Generic
 from enum import Enum
 from pydantic import BaseModel, Field
 from collections import deque
+from dataclasses import dataclass
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar('T', bound=Union[int, float])
+
+@dataclass
+class MetricValue(Generic[T]):
+    """Container for a metric value with timestamp."""
+    value: T
+    timestamp: datetime
+    
+    def __post_init__(self):
+        """Validate the metric value."""
+        if not isinstance(self.value, (int, float)):
+            raise ValueError(f"Metric value must be numeric, got {type(self.value)}")
+        if not isinstance(self.timestamp, datetime):
+            raise ValueError(f"Timestamp must be datetime, got {type(self.timestamp)}")
 
 class MetricStatus(str, Enum):
     """Status of a monitored metric."""
@@ -58,7 +75,7 @@ class MonitoringConfig(BaseModel):
     dashboard_url: Optional[str] = None
 
 
-class MetricHistory:
+class MetricHistory(Generic[T]):
     """Stores a moving window of metric values with statistical functions."""
     
     def __init__(self, max_size: int = 20):
@@ -67,14 +84,41 @@ class MetricHistory:
         
         Args:
             max_size: Maximum number of values to keep
+            
+        Raises:
+            ValueError: If max_size is not positive
         """
-        self.values = deque(maxlen=max_size)
+        if max_size <= 0:
+            raise ValueError("max_size must be positive")
+        self.values: deque[MetricValue[T]] = deque(maxlen=max_size)
         self.max_size = max_size
     
-    def add(self, value: float) -> None:
-        """Add a new value to the history."""
+    def add(self, value: T, timestamp: Optional[datetime] = None) -> None:
+        """
+        Add a new value to the history.
+        
+        Args:
+            value: Metric value to add
+            timestamp: Optional timestamp for the value
+        """
         if not (math.isnan(value) or math.isinf(value)):
-            self.values.append(value)
+            self.values.append(MetricValue(
+                value=value,
+                timestamp=timestamp or datetime.now()
+            ))
+    
+    def get_values(self, exclude_last: int = 0) -> List[T]:
+        """
+        Get list of values, optionally excluding recent ones.
+        
+        Args:
+            exclude_last: Number of most recent values to exclude
+            
+        Returns:
+            List of metric values
+        """
+        values = list(self.values)[:-exclude_last] if exclude_last > 0 else self.values
+        return [v.value for v in values]
     
     def mean(self, exclude_last: int = 0) -> Optional[float]:
         """
@@ -86,7 +130,7 @@ class MetricHistory:
         Returns:
             Mean value or None if insufficient data
         """
-        values = list(self.values)[:-exclude_last] if exclude_last > 0 else self.values
+        values = self.get_values(exclude_last)
         if not values:
             return None
         return sum(values) / len(values)
@@ -101,31 +145,49 @@ class MetricHistory:
         Returns:
             Median value or None if insufficient data
         """
-        values = list(self.values)[:-exclude_last] if exclude_last > 0 else self.values
+        values = self.get_values(exclude_last)
         if not values:
             return None
         return statistics.median(values)
     
-    def latest(self) -> Optional[float]:
-        """Get the most recent value."""
-        if not self.values:
-            return None
-        return self.values[-1]
-    
-    def std_dev(self) -> Optional[float]:
+    def std_dev(self, exclude_last: int = 0) -> Optional[float]:
         """
         Calculate the standard deviation of stored values.
         
+        Args:
+            exclude_last: Number of most recent values to exclude
+            
         Returns:
             Standard deviation or None if insufficient data
         """
-        if len(self.values) < 2:
+        values = self.get_values(exclude_last)
+        if len(values) < 2:
             return None
-        return statistics.stdev(self.values)
+        return statistics.stdev(values)
     
-    def __len__(self) -> int:
-        """Get the number of stored values."""
-        return len(self.values)
+    def latest(self) -> Optional[T]:
+        """Get the most recent value."""
+        if not self.values:
+            return None
+        return self.values[-1].value
+    
+    def latest_timestamp(self) -> Optional[datetime]:
+        """Get the timestamp of the most recent value."""
+        if not self.values:
+            return None
+        return self.values[-1].timestamp
+    
+    def is_empty(self) -> bool:
+        """Check if the history is empty."""
+        return len(self.values) == 0
+    
+    def is_full(self) -> bool:
+        """Check if the history has reached its maximum size."""
+        return len(self.values) == self.max_size
+    
+    def clear(self) -> None:
+        """Clear all stored values."""
+        self.values.clear()
 
 
 class TrainingMonitor:
@@ -148,14 +210,14 @@ class TrainingMonitor:
         self.enabled = config.enabled
         
         # Initialize metric histories
-        self.metrics: Dict[str, MetricHistory] = {
-            "loss": MetricHistory(config.metrics_history_size),
-            "grad_norm": MetricHistory(config.metrics_history_size),
-            "learning_rate": MetricHistory(config.metrics_history_size),
+        self.metrics: Dict[str, MetricHistory[float]] = {
+            "loss": MetricHistory[float](config.metrics_history_size),
+            "grad_norm": MetricHistory[float](config.metrics_history_size),
+            "learning_rate": MetricHistory[float](config.metrics_history_size),
         }
         
         # Layer-specific metrics
-        self.layer_metrics: Dict[str, Dict[str, MetricHistory]] = {}
+        self.layer_metrics: Dict[str, Dict[str, MetricHistory[float]]] = {}
         
         # Status tracking
         self.recovery_attempts = 0
@@ -197,13 +259,13 @@ class TrainingMonitor:
                 self.layer_metrics[layer_name] = {}
                 
             if name not in self.layer_metrics[layer_name]:
-                self.layer_metrics[layer_name][name] = MetricHistory(self.config.metrics_history_size)
+                self.layer_metrics[layer_name][name] = MetricHistory[float](self.config.metrics_history_size)
                 
             self.layer_metrics[layer_name][name].add(value)
         # Track global metrics
         else:
             if name not in self.metrics:
-                self.metrics[name] = MetricHistory(self.config.metrics_history_size)
+                self.metrics[name] = MetricHistory[float](self.config.metrics_history_size)
                 
             self.metrics[name].add(value)
     
@@ -214,7 +276,7 @@ class TrainingMonitor:
         Returns:
             Tuple of (is_ok, message, status)
         """
-        if "loss" not in self.metrics or len(self.metrics["loss"]) < 3:
+        if "loss" not in self.metrics or self.metrics["loss"].is_empty():
             return True, "Insufficient loss data", MetricStatus.UNKNOWN
             
         current_loss = self.metrics["loss"].latest()
@@ -227,9 +289,9 @@ class TrainingMonitor:
             return False, f"Loss spike detected: {current_loss:.4f} vs avg {avg_previous:.4f}", MetricStatus.CRITICAL
         
         # Check if loss is decreasing overall
-        if len(self.metrics["loss"]) >= 10:
-            first_half = list(self.metrics["loss"].values)[:len(self.metrics["loss"])//2]
-            second_half = list(self.metrics["loss"].values)[len(self.metrics["loss"])//2:]
+        if not self.metrics["loss"].is_empty() and len(self.metrics["loss"].values) >= 10:
+            first_half = self.metrics["loss"].get_values()[:len(self.metrics["loss"].values)//2]
+            second_half = self.metrics["loss"].get_values()[len(self.metrics["loss"].values)//2:]
             
             first_mean = sum(first_half) / len(first_half)
             second_mean = sum(second_half) / len(second_half)
@@ -246,7 +308,7 @@ class TrainingMonitor:
         Returns:
             Tuple of (is_ok, message, status)
         """
-        if "grad_norm" not in self.metrics or len(self.metrics["grad_norm"]) < 3:
+        if "grad_norm" not in self.metrics or self.metrics["grad_norm"].is_empty():
             return True, "Insufficient gradient data", MetricStatus.UNKNOWN
             
         current_norm = self.metrics["grad_norm"].latest()
@@ -318,7 +380,7 @@ class TrainingMonitor:
             return False, f"Validation loss much higher than training: {val_loss:.4f} vs {train_loss:.4f}", MetricStatus.WARNING
             
         # Check if validation loss is increasing
-        if "val_loss" in self.metrics and len(self.metrics["val_loss"]) >= 3:
+        if "val_loss" in self.metrics and not self.metrics["val_loss"].is_empty():
             prev_val_loss = self.metrics["val_loss"].mean(exclude_last=1)
             if prev_val_loss is not None and val_loss > prev_val_loss:
                 return False, f"Validation loss increasing: {val_loss:.4f} vs {prev_val_loss:.4f}", MetricStatus.WARNING
@@ -460,7 +522,7 @@ class TrainingMonitor:
         
         # Add global metrics
         for name, history in self.metrics.items():
-            if len(history) > 0:
+            if not history.is_empty():
                 summary["global_metrics"][name] = {
                     "current": history.latest(),
                     "mean": history.mean(),
@@ -472,7 +534,7 @@ class TrainingMonitor:
         for layer_name, metrics in self.layer_metrics.items():
             summary["layer_metrics"][layer_name] = {}
             for name, history in metrics.items():
-                if len(history) > 0:
+                if not history.is_empty():
                     summary["layer_metrics"][layer_name][name] = {
                         "current": history.latest(),
                         "mean": history.mean()

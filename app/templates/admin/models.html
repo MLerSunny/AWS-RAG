@@ -19,21 +19,23 @@
             <div class="card-header d-flex justify-content-between align-items-center">
                 <h5 class="mb-0">Models</h5>
                 <div class="input-group" style="width: 300px;">
-                    <input type="text" id="modelSearch" class="form-control" placeholder="Search models...">
+                    <input type="text" id="modelSearch" class="form-control" placeholder="Search models..." 
+                           aria-label="Search models" data-bs-toggle="tooltip" 
+                           title="Search by model name, type, or status">
                     <span class="input-group-text"><i class="bi bi-search"></i></span>
                 </div>
             </div>
             <div class="card-body">
                 <div class="table-responsive">
-                    <table class="table table-hover">
+                    <table class="table table-hover" aria-label="Model Registry Table">
                         <thead>
                             <tr>
-                                <th>ID</th>
-                                <th>Name</th>
-                                <th>Type</th>
-                                <th>Status</th>
-                                <th>Last Updated</th>
-                                <th>Actions</th>
+                                <th scope="col">ID</th>
+                                <th scope="col">Name</th>
+                                <th scope="col">Type</th>
+                                <th scope="col">Status</th>
+                                <th scope="col">Last Updated</th>
+                                <th scope="col">Actions</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -55,15 +57,18 @@
                                 </td>
                                 <td>{{ model.updated_at|default('N/A') }}</td>
                                 <td>
-                                    <div class="btn-group">
-                                        <a href="/admin/models/{{ model.id }}" class="btn btn-sm btn-outline-primary">
+                                    <div class="btn-group" role="group" aria-label="Model actions">
+                                        <a href="/admin/models/{{ model.id }}" class="btn btn-sm btn-outline-primary"
+                                           data-bs-toggle="tooltip" title="View model details">
                                             <i class="bi bi-info-circle"></i> Details
                                         </a>
                                         <button type="button" class="btn btn-sm btn-outline-danger" 
                                                 data-bs-toggle="modal" 
                                                 data-bs-target="#deleteModelModal"
                                                 data-model-id="{{ model.id }}"
-                                                data-model-name="{{ model.name }}">
+                                                data-model-name="{{ model.name }}"
+                                                data-bs-toggle="tooltip" 
+                                                title="Delete model">
                                             <i class="bi bi-trash"></i>
                                         </button>
                                     </div>
@@ -85,14 +90,16 @@
                 <h5 class="mb-0">Compare Models</h5>
             </div>
             <div class="card-body">
-                <form action="/admin/models/compare" method="get">
+                <form id="compareForm" action="/admin/models/compare" method="get">
                     <div class="mb-3">
                         <label for="compareModels" class="form-label">Select models to compare:</label>
-                        <select multiple class="form-select" id="compareModels" name="model_ids" style="height: 150px;">
+                        <select multiple class="form-select" id="compareModels" name="model_ids" 
+                                style="height: 150px;" aria-describedby="compareHelp">
                             {% for model in models %}
                             <option value="{{ model.id }}">{{ model.name }} ({{ model.type }})</option>
                             {% endfor %}
                         </select>
+                        <div id="compareHelp" class="form-text">Hold Ctrl (Windows) or Command (Mac) to select multiple models</div>
                     </div>
                     <button type="button" id="compareBtn" class="btn btn-primary">Compare Selected Models</button>
                 </form>
@@ -101,7 +108,7 @@
     </div>
 </div>
 {% else %}
-<div class="alert alert-info">
+<div class="alert alert-info" role="alert">
     <i class="bi bi-info-circle me-2"></i> No models have been registered yet. Click the "Add Model" button to register your first model.
 </div>
 {% endif %}
@@ -115,34 +122,59 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
-                <form id="addModelForm" action="/admin/models/create" method="post">
+                <form id="addModelForm" action="/admin/models/create" method="post" class="needs-validation" novalidate>
                     <div class="mb-3">
                         <label for="model_id" class="form-label">Model ID *</label>
-                        <input type="text" class="form-control" id="model_id" name="model_id" required>
-                        <div class="form-text">Unique identifier for the model (e.g., "claude-3-haiku")</div>
+                        <input type="text" class="form-control" id="model_id" name="model_id" required
+                               pattern="^[a-zA-Z0-9-_]+$" minlength="3" maxlength="50"
+                               aria-describedby="modelIdHelp">
+                        <div id="modelIdHelp" class="form-text">Unique identifier for the model (e.g., "claude-3-haiku")</div>
+                        <div class="invalid-feedback">
+                            Please enter a valid model ID (3-50 characters, alphanumeric, hyphens, and underscores only)
+                        </div>
                     </div>
                     <div class="mb-3">
                         <label for="name" class="form-label">Model Name *</label>
-                        <input type="text" class="form-control" id="name" name="name" required>
-                        <div class="form-text">Display name for the model (e.g., "Claude 3 Haiku")</div>
+                        <input type="text" class="form-control" id="name" name="name" required
+                               minlength="3" maxlength="100"
+                               aria-describedby="nameHelp">
+                        <div id="nameHelp" class="form-text">Display name for the model (e.g., "Claude 3 Haiku")</div>
+                        <div class="invalid-feedback">
+                            Please enter a valid model name (3-100 characters)
+                        </div>
                     </div>
                     <div class="mb-3">
                         <label for="model_type" class="form-label">Model Type *</label>
-                        <select class="form-select" id="model_type" name="model_type" required>
+                        <select class="form-select" id="model_type" name="model_type" required
+                                aria-describedby="typeHelp">
                             <option value="" disabled selected>Select model type</option>
                             {% for type in model_types %}
                             <option value="{{ type }}">{{ type }}</option>
                             {% endfor %}
                         </select>
+                        <div id="typeHelp" class="form-text">Select the type of model</div>
+                        <div class="invalid-feedback">
+                            Please select a model type
+                        </div>
                     </div>
                     <div class="mb-3">
                         <label for="endpoint" class="form-label">Endpoint URL</label>
-                        <input type="text" class="form-control" id="endpoint" name="endpoint">
-                        <div class="form-text">API endpoint URL for this model (if applicable)</div>
+                        <input type="url" class="form-control" id="endpoint" name="endpoint"
+                               pattern="https?://.+"
+                               aria-describedby="endpointHelp">
+                        <div id="endpointHelp" class="form-text">API endpoint URL for this model (if applicable)</div>
+                        <div class="invalid-feedback">
+                            Please enter a valid URL (starting with http:// or https://)
+                        </div>
                     </div>
                     <div class="mb-3">
                         <label for="description" class="form-label">Description</label>
-                        <textarea class="form-control" id="description" name="description" rows="3"></textarea>
+                        <textarea class="form-control" id="description" name="description" rows="3"
+                                  maxlength="500" aria-describedby="descriptionHelp"></textarea>
+                        <div id="descriptionHelp" class="form-text">Brief description of the model (max 500 characters)</div>
+                        <div class="invalid-feedback">
+                            Description cannot exceed 500 characters
+                        </div>
                     </div>
                     <div class="form-check mb-3">
                         <input class="form-check-input" type="checkbox" id="enabled" name="enabled" checked>
@@ -154,7 +186,10 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="submit" form="addModelForm" class="btn btn-primary">Add Model</button>
+                <button type="submit" form="addModelForm" class="btn btn-primary">
+                    <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                    Add Model
+                </button>
             </div>
         </div>
     </div>
@@ -169,13 +204,20 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
+                <div class="alert alert-warning" role="alert">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    <strong>Warning:</strong> This action cannot be undone.
+                </div>
                 <p>Are you sure you want to delete the model <strong id="deleteModelName"></strong>?</p>
-                <p class="text-danger">This action cannot be undone. All metrics, artifacts, and other data associated with this model will be deleted.</p>
+                <p class="text-danger">All metrics, artifacts, and other data associated with this model will be deleted.</p>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                 <form id="deleteModelForm" action="" method="post">
-                    <button type="submit" class="btn btn-danger">Delete Model</button>
+                    <button type="submit" class="btn btn-danger">
+                        <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                        Delete Model
+                    </button>
                 </form>
             </div>
         </div>
@@ -185,16 +227,54 @@
 
 {% block extra_js %}
 <script>
+    // Form validation
+    (function() {
+        'use strict';
+        
+        const forms = document.querySelectorAll('.needs-validation');
+        
+        Array.from(forms).forEach(form => {
+            form.addEventListener('submit', event => {
+                if (!form.checkValidity()) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                }
+                
+                form.classList.add('was-validated');
+            }, false);
+        });
+    })();
+    
     // Search functionality
     document.getElementById('modelSearch').addEventListener('keyup', function() {
         let searchTerm = this.value.toLowerCase();
         let table = document.querySelector('table');
         let rows = table.querySelectorAll('tbody tr');
+        let visibleCount = 0;
         
         rows.forEach(row => {
             let text = row.textContent.toLowerCase();
-            row.style.display = text.includes(searchTerm) ? '' : 'none';
+            let isVisible = text.includes(searchTerm);
+            row.style.display = isVisible ? '' : 'none';
+            if (isVisible) visibleCount++;
         });
+        
+        // Show message if no results
+        let noResultsRow = table.querySelector('tr.no-results');
+        if (visibleCount === 0) {
+            if (!noResultsRow) {
+                noResultsRow = document.createElement('tr');
+                noResultsRow.className = 'no-results';
+                noResultsRow.innerHTML = `
+                    <td colspan="6" class="text-center py-3">
+                        <i class="bi bi-search me-2"></i>No models found matching "${searchTerm}"
+                    </td>
+                `;
+                table.querySelector('tbody').appendChild(noResultsRow);
+            }
+        } else if (noResultsRow) {
+            noResultsRow.remove();
+        }
     });
     
     // Set up delete modal
@@ -213,11 +293,80 @@
         let selectedModels = Array.from(select.selectedOptions).map(option => option.value);
         
         if (selectedModels.length < 2) {
-            alert('Please select at least 2 models to compare');
+            showToast('Please select at least 2 models to compare', 'warning');
             return;
         }
         
         window.location.href = `/admin/models/compare?model_ids=${selectedModels.join(',')}`;
+    });
+    
+    // Form submission handling
+    document.getElementById('addModelForm').addEventListener('submit', function(event) {
+        event.preventDefault();
+        
+        if (!validateForm(this)) {
+            return;
+        }
+        
+        const submitButton = this.querySelector('button[type="submit"]');
+        const spinner = submitButton.querySelector('.spinner-border');
+        
+        submitButton.disabled = true;
+        spinner.classList.remove('d-none');
+        
+        fetch(this.action, {
+            method: 'POST',
+            body: new FormData(this)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast('Model added successfully', 'success');
+                setTimeout(() => window.location.reload(), 1000);
+            } else {
+                showToast(data.message || 'Failed to add model', 'danger');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showToast('An error occurred while adding the model', 'danger');
+        })
+        .finally(() => {
+            submitButton.disabled = false;
+            spinner.classList.add('d-none');
+        });
+    });
+    
+    // Delete form handling
+    document.getElementById('deleteModelForm').addEventListener('submit', function(event) {
+        event.preventDefault();
+        
+        const submitButton = this.querySelector('button[type="submit"]');
+        const spinner = submitButton.querySelector('.spinner-border');
+        
+        submitButton.disabled = true;
+        spinner.classList.remove('d-none');
+        
+        fetch(this.action, {
+            method: 'POST'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast('Model deleted successfully', 'success');
+                setTimeout(() => window.location.reload(), 1000);
+            } else {
+                showToast(data.message || 'Failed to delete model', 'danger');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showToast('An error occurred while deleting the model', 'danger');
+        })
+        .finally(() => {
+            submitButton.disabled = false;
+            spinner.classList.add('d-none');
+        });
     });
 </script>
 {% endblock %} 

@@ -5,18 +5,32 @@ import os
 import json
 import tempfile
 import time
-from typing import List, Dict, Optional, Any, Union
+from typing import List, Dict, Optional, Any, Union, TypeVar, Generic, cast, TYPE_CHECKING
 from functools import lru_cache
+from datetime import datetime
+from exceptions import (
+    ConfigurationError, ProcessingError, ErrorCode,
+    FileOperationError
+)
 from ...utils.logger import setup_logger
-from ...config import settings
+from ...utils.common import execute_with_retry
+
+if TYPE_CHECKING:
+    from pysnow import Client
 
 # Conditional import to handle missing package
 try:
     import pysnow as snow
+    from pysnow import Client as SnowClient
+    HAVE_SNOW = True
 except ImportError:
     snow = None
+    SnowClient = None
+    HAVE_SNOW = False
 
 logger = setup_logger(__name__)
+
+T = TypeVar('T')
 
 class ServiceNowConnector:
     """Connector to retrieve data from ServiceNow instances."""
@@ -28,51 +42,163 @@ class ServiceNowConnector:
         password: Optional[str] = None,
         max_retries: int = 3,
         retry_delay: float = 1.0
-    ):
+    ) -> None:
         """
         Initialize the ServiceNow connector.
         
         Args:
-            instance_url (Optional[str]): ServiceNow instance URL
-            username (Optional[str]): ServiceNow username
-            password (Optional[str]): ServiceNow password
-            max_retries (int): Maximum number of retries for API calls
-            retry_delay (float): Delay between retries in seconds (exponential backoff applied)
+            instance_url: ServiceNow instance URL
+            username: ServiceNow username
+            password: ServiceNow password
+            max_retries: Maximum number of retries for API calls
+            retry_delay: Delay between retries in seconds
+            
+        Raises:
+            ConfigurationError: If required configuration is missing
+            ImportError: If pysnow package is not installed
         """
-        self.instance_url = instance_url or os.environ.get("SERVICENOW_INSTANCE_URL", "")
-        self.username = username or os.environ.get("SERVICENOW_USERNAME", "")
-        self.password = password or os.environ.get("SERVICENOW_PASSWORD", "")
-        self.max_retries = max_retries
-        self.retry_delay = retry_delay
-        self.client = None
-        self._cache = {}
+        if not HAVE_SNOW:
+            raise ImportError("pysnow package is required but not installed")
+            
+        self.instance_url = instance_url or os.environ.get("SERVICENOW_INSTANCE_URL")
+        self.username = username or os.environ.get("SERVICENOW_USERNAME")
+        self.password = password or os.environ.get("SERVICENOW_PASSWORD")
         
         if not all([self.instance_url, self.username, self.password]):
-            logger.warning("ServiceNow credentials not fully configured")
-        else:
-            try:
-                # Initialize ServiceNow client
-                if snow is None:
-                    logger.error("pysnow package is not installed. Please install it with 'pip install pysnow'")
-                else:
-                    self.client = snow.Client(
-                        instance=self.instance_url,
-                        user=self.username,
-                        password=self.password
-                    )
-                    logger.info(f"ServiceNow client initialized for {self.instance_url}")
-            except Exception as e:
-                logger.error(f"Error initializing ServiceNow client: {str(e)}")
-    
+            raise ConfigurationError(
+                "Missing required ServiceNow configuration",
+                context={
+                    'has_url': bool(self.instance_url),
+                    'has_username': bool(self.username),
+                    'has_password': bool(self.password)
+                },
+                error_code=ErrorCode.CONFIG_MISSING
+            )
+            
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
+        self.client: Optional[SnowClient] = None
+        self._cache = {}
+        self._last_connection = None
+        self._connection_timeout = 3600  # 1 hour
+        
+    def connect(self) -> None:
+        """
+        Establish connection to ServiceNow.
+        
+        Raises:
+            ProcessingError: If connection fails
+        """
+        if self.is_connected() and not self._is_connection_expired():
+            return
+            
+        try:
+            self.client = snow.Client(
+                instance=self.instance_url,
+                user=self.username,
+                password=self.password
+            )
+            self._last_connection = datetime.now()
+            logger.info(f"Connected to ServiceNow instance: {self.instance_url}")
+        except Exception as e:
+            raise ProcessingError(
+                f"Failed to connect to ServiceNow: {str(e)}",
+                context={'instance_url': self.instance_url},
+                cause=e
+            )
+            
+    def _is_connection_expired(self) -> bool:
+        """Check if the current connection has expired."""
+        if not self._last_connection:
+            return True
+        return (datetime.now() - self._last_connection).total_seconds() > self._connection_timeout
+        
     def is_connected(self) -> bool:
         """
-        Check if the connector is properly initialized.
+        Check if the connector is properly connected.
         
         Returns:
             bool: True if connected, False otherwise
         """
         return self.client is not None
-
+        
+    def disconnect(self) -> None:
+        """Disconnect from ServiceNow."""
+        self.client = None
+        self._last_connection = None
+        self._cache.clear()
+        logger.info("Disconnected from ServiceNow")
+        
+    def __enter__(self) -> 'ServiceNowConnector':
+        """Context manager entry."""
+        self.connect()
+        return self
+        
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Context manager exit."""
+        self.disconnect()
+        
+    @lru_cache(maxsize=100)
+    def get_ticket(self, ticket_number: str) -> Dict[str, Any]:
+        """
+        Get ticket details by number.
+        
+        Args:
+            ticket_number: ServiceNow ticket number
+            
+        Returns:
+            Dict containing ticket details
+            
+        Raises:
+            ProcessingError: If ticket retrieval fails
+        """
+        if not self.is_connected():
+            self.connect()
+            
+        if not self.client:
+            raise ProcessingError("ServiceNow client not initialized")
+            
+        try:
+            resource = self.client.resource('api/now/table/incident')
+            response = resource.get(query={'number': ticket_number})
+            return response.one()
+        except Exception as e:
+            raise ProcessingError(
+                f"Failed to retrieve ticket {ticket_number}: {str(e)}",
+                context={'ticket_number': ticket_number},
+                cause=e
+            )
+            
+    def get_kb_article(self, article_number: str) -> Dict[str, Any]:
+        """
+        Get knowledge base article by number.
+        
+        Args:
+            article_number: KB article number
+            
+        Returns:
+            Dict containing article details
+            
+        Raises:
+            ProcessingError: If article retrieval fails
+        """
+        if not self.is_connected():
+            self.connect()
+            
+        if not self.client:
+            raise ProcessingError("ServiceNow client not initialized")
+            
+        try:
+            resource = self.client.resource('api/now/table/kb_knowledge')
+            response = resource.get(query={'number': article_number})
+            return response.one()
+        except Exception as e:
+            raise ProcessingError(
+                f"Failed to retrieve KB article {article_number}: {str(e)}",
+                context={'article_number': article_number},
+                cause=e
+            )
+    
     def _execute_with_retry(self, operation_func, *args, **kwargs) -> Any:
         """
         Execute an operation with retry logic.
