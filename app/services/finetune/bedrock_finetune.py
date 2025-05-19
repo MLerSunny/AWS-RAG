@@ -39,6 +39,14 @@ class FineTuneConfig(BaseModel):
     data_format: TrainingDataFormat = TrainingDataFormat.JSONL
     custom_model_name: Optional[str] = None
     description: Optional[str] = None
+    
+    # PEFT/LoRA configuration
+    enable_peft: bool = False
+    peft_method: str = "lora"  # Options: "lora", "prefix_tuning", "p_tuning"
+    lora_rank: int = 8
+    lora_alpha: float = 16.0
+    lora_dropout: float = 0.05
+    target_modules: List[str] = Field(default_factory=lambda: ["q_proj", "v_proj"])
 
 class FineTuneJob(BaseModel):
     """Representation of a fine-tuning job."""
@@ -201,6 +209,18 @@ class BedrockFineTuner:
                 hyperparameters["batchSize"] = "1"
             if "learningRate" not in hyperparameters:
                 hyperparameters["learningRate"] = "0.0001"
+            
+            # Add PEFT/LoRA parameters if enabled
+            if config.enable_peft:
+                hyperparameters.update({
+                    "enable_peft": "true",
+                    "peft_method": config.peft_method,
+                    "lora_rank": str(config.lora_rank),
+                    "lora_alpha": str(config.lora_alpha),
+                    "lora_dropout": str(config.lora_dropout),
+                    "target_modules": ",".join(config.target_modules)
+                })
+                logger.info(f"Enabling {config.peft_method} with rank {config.lora_rank} for fine-tuning")
             
             # Convert hyperparameters to strings
             for key, value in hyperparameters.items():
@@ -399,4 +419,71 @@ class BedrockFineTuner:
         bucket = parts[0]
         key = '/'.join(parts[1:])
         
-        return bucket, key 
+        return bucket, key
+
+    @staticmethod
+    def create_example_config(method: str = "standard", model_id: str = "anthropic.claude-v2") -> FineTuneConfig:
+        """
+        Create an example fine-tuning configuration.
+        
+        Args:
+            method (str): Fine-tuning method - 'standard', 'lora', or 'combined'
+            model_id (str): Base model ID
+            
+        Returns:
+            FineTuneConfig: Example configuration
+        """
+        # Base configuration
+        config = FineTuneConfig(
+            job_name=f"{method}-finetune-{int(time.time())}",
+            base_model_id=model_id,
+            training_data_path="s3://your-bucket/training.jsonl",
+            output_data_path="s3://your-bucket/output/",
+            description=f"Example {method} fine-tuning configuration"
+        )
+        
+        # Configure based on method
+        if method == "standard":
+            # Standard fine-tuning with common hyperparameters
+            config.hyperparameters = {
+                "epochCount": "3",
+                "batchSize": "1",
+                "learningRate": "0.0001",
+                "weightDecay": "0.01",
+                "warmupSteps": "100"
+            }
+            config.enable_peft = False
+            
+        elif method == "lora":
+            # LoRA-only fine-tuning with minimal full model training
+            config.hyperparameters = {
+                "epochCount": "3", 
+                "batchSize": "4",  # Can use larger batches with LoRA
+                "learningRate": "0.0003",
+                "weightDecay": "0.01"
+            }
+            config.enable_peft = True
+            config.peft_method = "lora"
+            config.lora_rank = 8
+            config.lora_alpha = 16.0
+            config.lora_dropout = 0.05
+            config.target_modules = ["q_proj", "k_proj", "v_proj", "o_proj"]
+            
+        elif method == "combined":
+            # Combined approach with tailored hyperparameters
+            config.hyperparameters = {
+                "epochCount": "4",
+                "batchSize": "2",
+                "learningRate": "0.0001",
+                "weightDecay": "0.01",
+                "warmupSteps": "200",
+                "scheduler": "cosine"  # Custom scheduler
+            }
+            config.enable_peft = True
+            config.peft_method = "lora"
+            config.lora_rank = 16  # Higher rank for better capacity
+            config.lora_alpha = 32.0
+            config.lora_dropout = 0.1
+            config.target_modules = ["q_proj", "v_proj", "gate_proj", "up_proj", "down_proj"]
+        
+        return config 

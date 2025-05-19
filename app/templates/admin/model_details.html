@@ -1,0 +1,432 @@
+{% extends "base.html" %}
+
+{% block title %}{{ model.name }} - Model Details{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">
+        <a href="/admin/models" class="text-decoration-none">
+            <i class="bi bi-arrow-left me-2"></i>
+        </a>
+        {{ model.name }}
+        <span class="badge bg-primary">{{ model.type }}</span>
+        {% if model.enabled %}
+        <span class="badge bg-success">Enabled</span>
+        {% else %}
+        <span class="badge bg-danger">Disabled</span>
+        {% endif %}
+    </h1>
+    <div class="btn-toolbar mb-2 mb-md-0">
+        <div class="btn-group me-2">
+            <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#editModelModal">
+                <i class="bi bi-pencil me-1"></i> Edit
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteModelModal" 
+                    data-model-id="{{ model_id }}" data-model-name="{{ model.name }}">
+                <i class="bi bi-trash me-1"></i> Delete
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <ul class="nav nav-tabs card-header-tabs" id="modelTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="overview-tab" data-bs-toggle="tab" data-bs-target="#overview" type="button" role="tab" aria-controls="overview" aria-selected="true">Overview</button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="artifacts-tab" data-bs-toggle="tab" data-bs-target="#artifacts" type="button" role="tab" aria-controls="artifacts" aria-selected="false">Artifacts</button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="metrics-tab" data-bs-toggle="tab" data-bs-target="#metrics" type="button" role="tab" aria-controls="metrics" aria-selected="false">Metrics</button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="approval-tab" data-bs-toggle="tab" data-bs-target="#approval" type="button" role="tab" aria-controls="approval" aria-selected="false">Approval</button>
+                    </li>
+                </ul>
+            </div>
+            <div class="card-body">
+                <div class="tab-content" id="modelTabsContent">
+                    <!-- Overview Tab -->
+                    <div class="tab-pane fade show active" id="overview" role="tabpanel" aria-labelledby="overview-tab">
+                        <h5 class="card-title">Model Information</h5>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <table class="table table-striped">
+                                    <tbody>
+                                        <tr>
+                                            <th style="width: 30%">ID</th>
+                                            <td>{{ model_id }}</td>
+                                        </tr>
+                                        <tr>
+                                            <th>Name</th>
+                                            <td>{{ model.name }}</td>
+                                        </tr>
+                                        <tr>
+                                            <th>Type</th>
+                                            <td>{{ model.type }}</td>
+                                        </tr>
+                                        <tr>
+                                            <th>Endpoint</th>
+                                            <td>{{ model.endpoint|default('Not specified') }}</td>
+                                        </tr>
+                                        <tr>
+                                            <th>Created</th>
+                                            <td>{{ model.created_at|default('N/A') }}</td>
+                                        </tr>
+                                        <tr>
+                                            <th>Last Updated</th>
+                                            <td>{{ model.updated_at|default('N/A') }}</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="card h-100">
+                                    <div class="card-body">
+                                        <h5 class="card-title">Description</h5>
+                                        <p class="card-text">{{ model.description|default('No description provided.') }}</p>
+                                        
+                                        <h5 class="card-title mt-4">Parameters</h5>
+                                        {% if model.parameters %}
+                                        <pre class="bg-light p-3 rounded"><code>{{ model.parameters|tojson(indent=2) }}</code></pre>
+                                        {% else %}
+                                        <p class="card-text">No parameters defined.</p>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Artifacts Tab -->
+                    <div class="tab-pane fade" id="artifacts" role="tabpanel" aria-labelledby="artifacts-tab">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h5 class="card-title">Model Artifacts</h5>
+                            <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#uploadArtifactModal">
+                                <i class="bi bi-upload me-1"></i> Upload Artifact
+                            </button>
+                        </div>
+                        
+                        {% if artifacts %}
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Version</th>
+                                        <th>Location</th>
+                                        <th>Format</th>
+                                        <th>Size</th>
+                                        <th>Framework</th>
+                                        <th>Created</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for artifact in artifacts %}
+                                    <tr>
+                                        <td>{{ artifact.version }}</td>
+                                        <td>
+                                            <a href="#" class="text-truncate d-inline-block" style="max-width: 250px;" 
+                                               title="{{ artifact.location }}">
+                                                {{ artifact.location }}
+                                            </a>
+                                        </td>
+                                        <td>{{ artifact.format|default('Unknown') }}</td>
+                                        <td>{{ artifact.size_bytes|default('Unknown') }} bytes</td>
+                                        <td>{{ artifact.framework|default('Not specified') }}</td>
+                                        <td>{{ artifact.created_at|default('N/A') }}</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                        {% else %}
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle me-2"></i> No artifacts have been uploaded for this model.
+                        </div>
+                        {% endif %}
+                    </div>
+                    
+                    <!-- Metrics Tab -->
+                    <div class="tab-pane fade" id="metrics" role="tabpanel" aria-labelledby="metrics-tab">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h5 class="card-title">Performance Metrics</h5>
+                            <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addMetricModal">
+                                <i class="bi bi-graph-up me-1"></i> Add Metric
+                            </button>
+                        </div>
+                        
+                        {% if metrics %}
+                        <div class="row">
+                            {% for metric in metrics %}
+                            <div class="col-md-4 mb-3">
+                                <div class="card h-100 metric-card">
+                                    <div class="card-body">
+                                        <h5 class="card-title">{{ metric.name }}</h5>
+                                        <h2 class="display-6 text-primary">{{ metric.value }}</h2>
+                                        <div class="text-muted small mb-2">Type: {{ metric.type }}</div>
+                                        {% if metric.dataset %}
+                                        <div class="text-muted small mb-2">Dataset: {{ metric.dataset }}</div>
+                                        {% endif %}
+                                        {% if metric.description %}
+                                        <p class="card-text">{{ metric.description }}</p>
+                                        {% endif %}
+                                        <div class="text-muted small">Recorded on: {{ metric.timestamp|default('N/A') }}</div>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle me-2"></i> No metrics have been recorded for this model.
+                        </div>
+                        {% endif %}
+                    </div>
+                    
+                    <!-- Approval Tab -->
+                    <div class="tab-pane fade" id="approval" role="tabpanel" aria-labelledby="approval-tab">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h5 class="card-title">Approval Status</h5>
+                        </div>
+                        
+                        <div class="card mb-4">
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <h6>Current Status</h6>
+                                        <div class="mb-3">
+                                            {% if model.approval_status %}
+                                            <span class="badge fs-6 p-2 {% if model.approval_status == 'approved' %}bg-success
+                                                                         {% elif model.approval_status == 'rejected' %}bg-danger
+                                                                         {% elif model.approval_status == 'in_review' %}bg-warning
+                                                                         {% else %}bg-secondary{% endif %}">
+                                                {{ model.approval_status|title }}
+                                            </span>
+                                            {% else %}
+                                            <span class="badge fs-6 p-2 bg-secondary">Pending</span>
+                                            {% endif %}
+                                        </div>
+                                        
+                                        {% if model.approval_reviewer %}
+                                        <p><strong>Reviewed by:</strong> {{ model.approval_reviewer }}</p>
+                                        {% endif %}
+                                        
+                                        {% if model.approval_timestamp %}
+                                        <p><strong>Last updated:</strong> {{ model.approval_timestamp }}</p>
+                                        {% endif %}
+                                        
+                                        {% if model.approval_comments %}
+                                        <h6 class="mt-3">Comments</h6>
+                                        <p>{{ model.approval_comments }}</p>
+                                        {% endif %}
+                                    </div>
+                                    
+                                    <div class="col-md-6">
+                                        <h6>Update Status</h6>
+                                        <form action="/admin/models/{{ model_id }}/update" method="post">
+                                            <div class="mb-3">
+                                                <select class="form-select" name="approval_status" required>
+                                                    <option value="" disabled selected>Select status</option>
+                                                    {% for status in approval_statuses %}
+                                                    <option value="{{ status }}" {% if model.approval_status == status %}selected{% endif %}>
+                                                        {{ status|title }}
+                                                    </option>
+                                                    {% endfor %}
+                                                </select>
+                                            </div>
+                                            <div class="mb-3">
+                                                <textarea class="form-control" name="approval_comments" rows="3" placeholder="Approval comments...">{{ model.approval_comments|default('') }}</textarea>
+                                            </div>
+                                            <button type="submit" class="btn btn-primary">Update Approval Status</button>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Model Modal -->
+<div class="modal fade" id="editModelModal" tabindex="-1" aria-labelledby="editModelModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="editModelModalLabel">Edit Model</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="editModelForm" action="/admin/models/{{ model_id }}/update" method="post">
+                    <div class="mb-3">
+                        <label for="edit_name" class="form-label">Model Name</label>
+                        <input type="text" class="form-control" id="edit_name" name="name" value="{{ model.name }}">
+                    </div>
+                    <div class="mb-3">
+                        <label for="edit_endpoint" class="form-label">Endpoint URL</label>
+                        <input type="text" class="form-control" id="edit_endpoint" name="endpoint" value="{{ model.endpoint|default('') }}">
+                    </div>
+                    <div class="mb-3">
+                        <label for="edit_description" class="form-label">Description</label>
+                        <textarea class="form-control" id="edit_description" name="description" rows="3">{{ model.description|default('') }}</textarea>
+                    </div>
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" id="edit_enabled" name="enabled" {% if model.enabled %}checked{% endif %}>
+                        <label class="form-check-label" for="edit_enabled">
+                            Enabled
+                        </label>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" form="editModelForm" class="btn btn-primary">Save Changes</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Model Modal -->
+<div class="modal fade" id="deleteModelModal" tabindex="-1" aria-labelledby="deleteModelModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deleteModelModalLabel">Confirm Deletion</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to delete the model <strong id="deleteModelName"></strong>?</p>
+                <p class="text-danger">This action cannot be undone. All metrics, artifacts, and other data associated with this model will be deleted.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form id="deleteModelForm" action="/admin/models/{{ model_id }}/delete" method="post">
+                    <button type="submit" class="btn btn-danger">Delete Model</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Upload Artifact Modal -->
+<div class="modal fade" id="uploadArtifactModal" tabindex="-1" aria-labelledby="uploadArtifactModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="uploadArtifactModalLabel">Upload Model Artifact</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="uploadArtifactForm" action="/admin/models/{{ model_id }}/upload-artifact" method="post" enctype="multipart/form-data">
+                    <div class="mb-3">
+                        <label for="version" class="form-label">Version *</label>
+                        <input type="text" class="form-control" id="version" name="version" required>
+                        <div class="form-text">Version identifier (e.g., "v1.0.0")</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="framework" class="form-label">Framework</label>
+                        <input type="text" class="form-control" id="framework" name="framework">
+                        <div class="form-text">Model framework (e.g., "PyTorch", "TensorFlow")</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="description" class="form-label">Description</label>
+                        <textarea class="form-control" id="description" name="description" rows="2"></textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label for="artifact_file" class="form-label">Artifact File *</label>
+                        <input type="file" class="form-control" id="artifact_file" name="artifact_file" required>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" form="uploadArtifactForm" class="btn btn-primary">Upload</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Metric Modal -->
+<div class="modal fade" id="addMetricModal" tabindex="-1" aria-labelledby="addMetricModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="addMetricModalLabel">Add Performance Metric</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addMetricForm" action="/admin/models/{{ model_id }}/record-metric" method="post">
+                    <div class="mb-3">
+                        <label for="metric_name" class="form-label">Metric Name *</label>
+                        <input type="text" class="form-control" id="metric_name" name="name" required>
+                        <div class="form-text">Name of the metric (e.g., "Accuracy", "Latency")</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="metric_value" class="form-label">Value *</label>
+                        <input type="text" class="form-control" id="metric_value" name="value" required>
+                        <div class="form-text">Metric value (e.g., "0.95", "250ms")</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="metric_type" class="form-label">Metric Type *</label>
+                        <input type="text" class="form-control" id="metric_type" name="metric_type" required>
+                        <div class="form-text">Type of metric (e.g., "accuracy", "performance", "latency")</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="metric_dataset" class="form-label">Dataset</label>
+                        <input type="text" class="form-control" id="metric_dataset" name="dataset">
+                        <div class="form-text">Dataset used for measurement (if applicable)</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="metric_description" class="form-label">Description</label>
+                        <textarea class="form-control" id="metric_description" name="description" rows="2"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" form="addMetricForm" class="btn btn-primary">Add Metric</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Set up delete modal
+    document.getElementById('deleteModelModal').addEventListener('show.bs.modal', function (event) {
+        let button = event.relatedTarget;
+        let modelName = button.getAttribute('data-model-name');
+        document.getElementById('deleteModelName').textContent = modelName;
+    });
+    
+    // Format timestamps
+    document.addEventListener('DOMContentLoaded', function() {
+        const formatTimestamp = (timestamp) => {
+            if (!timestamp) return 'N/A';
+            
+            // Check if timestamp is a unix timestamp (number)
+            if (!isNaN(timestamp)) {
+                const date = new Date(timestamp * 1000);
+                return date.toLocaleString();
+            }
+            
+            return timestamp;
+        };
+        
+        // Format created_at and updated_at timestamps
+        const timestampElements = document.querySelectorAll('td:contains("created_at"), td:contains("updated_at")');
+        timestampElements.forEach(el => {
+            if (el.textContent && !isNaN(el.textContent.trim())) {
+                el.textContent = formatTimestamp(parseInt(el.textContent.trim()));
+            }
+        });
+    });
+</script>
+{% endblock %} 

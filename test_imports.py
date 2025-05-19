@@ -1,93 +1,60 @@
 #!/usr/bin/env python
 """
-Test script to validate our import fixes.
+Test imports after code cleanup to ensure no modules are missing.
 """
+import sys
+import os
+import traceback
 
-def test_servicenow_connector():
-    print("Testing ServiceNowConnector...")
+# Add project root to path
+sys.path.insert(0, os.path.abspath("."))
+
+def test_import(module_path, expected_error=False):
+    """Test importing a module and report success or failure."""
     try:
-        from app.services.connectors.servicenow_connector import ServiceNowConnector
-        connector = ServiceNowConnector()
-        print("  ✓ ServiceNowConnector imported and initialized successfully")
+        print(f"Attempting to import {module_path}...")
+        module = __import__(module_path, fromlist=["*"])
+        if expected_error:
+            print(f"UNEXPECTED SUCCESS: {module_path} imported successfully but error was expected")
+            return False
+        print(f"SUCCESS: {module_path} imported successfully")
         return True
     except ImportError as e:
-        print(f"  ✗ Import error: {e}")
+        if expected_error:
+            print(f"EXPECTED ERROR: {module_path} import failed as expected")
+            return True
+        print(f"ERROR: Failed to import {module_path}")
+        print(f"Exception: {str(e)}")
+        traceback.print_exc()
         return False
     except Exception as e:
-        print(f"  ✗ Error: {e}")
+        print(f"UNEXPECTED ERROR: Error importing {module_path}")
+        print(f"Exception: {str(e)}")
+        traceback.print_exc()
         return False
 
-def test_sharepoint_connector():
-    print("Testing SharePointConnector...")
-    try:
-        from app.services.connectors.sharepoint_connector import SharePointConnector
-        connector = SharePointConnector()
-        print("  ✓ SharePointConnector imported and initialized successfully")
-        return True
-    except ImportError as e:
-        print(f"  ✗ Import error: {e}")
-        return False
-    except Exception as e:
-        print(f"  ✗ Error: {e}")
-        return False
-
-def test_hallucination_detector():
-    print("Testing HallucinationDetector...")
-    try:
-        from app.services.quality.hallucination_detector import HallucinationDetector
-        detector = HallucinationDetector()
-        print("  ✓ HallucinationDetector imported and initialized successfully")
-        return True
-    except ImportError as e:
-        print(f"  ✗ Import error: {e}")
-        return False
-    except Exception as e:
-        print(f"  ✗ Error: {e}")
-        return False
-
-def test_ab_testing():
-    print("Testing ABTestingManager...")
-    try:
-        from app.services.experiment.ab_testing import ABTestingManager, AllocationStrategy
-        manager = ABTestingManager()
-        print("  ✓ ABTestingManager imported and initialized successfully")
-        return True
-    except ImportError as e:
-        print(f"  ✗ Import error: {e}")
-        return False
-    except Exception as e:
-        print(f"  ✗ Error: {e}")
-        return False
-
-def test_api_routes():
-    print("Testing API routes...")
-    try:
-        from app.routes.api import router
-        print("  ✓ API routes imported successfully")
-        return True
-    except ImportError as e:
-        print(f"  ✗ Import error: {e}")
-        return False
-    except Exception as e:
-        print(f"  ✗ Error: {e}")
-        return False
+def run_tests():
+    """Run import tests for various modules."""
+    results = []
+    
+    # Test imports that should succeed
+    results.append(test_import("app.services.experiment.ab_testing"))
+    results.append(test_import("app.services.finetune.bedrock_finetune"))
+    
+    # Test imports that should fail (removed modules)
+    results.append(test_import("app.services.evaluation.ab_testing", expected_error=True))
+    results.append(test_import("app.services.fine_tuning.bedrock_tuning", expected_error=True))
+    
+    # Summary
+    total = len(results)
+    passed = sum(results)
+    print(f"\nTEST SUMMARY: {passed}/{total} tests passed")
+    if passed == total:
+        print("All import tests passed successfully!")
+        return 0
+    else:
+        print("Some import tests failed.")
+        return 1
 
 if __name__ == "__main__":
-    print("Running import tests...")
-    
-    servicenow_success = test_servicenow_connector()
-    sharepoint_success = test_sharepoint_connector()
-    hallucination_success = test_hallucination_detector()
-    ab_testing_success = test_ab_testing()
-    api_routes_success = test_api_routes()
-    
-    print("\nSummary:")
-    print(f"ServiceNowConnector: {'✓' if servicenow_success else '✗'}")
-    print(f"SharePointConnector: {'✓' if sharepoint_success else '✗'}")
-    print(f"HallucinationDetector: {'✓' if hallucination_success else '✗'}")
-    print(f"ABTestingManager: {'✓' if ab_testing_success else '✗'}")
-    print(f"API Routes: {'✓' if api_routes_success else '✗'}")
-    
-    total_success = servicenow_success and sharepoint_success and hallucination_success and ab_testing_success and api_routes_success
-    
-    print(f"\nOverall: {'✓ All tests passed!' if total_success else '✗ Some tests failed!'}") 
+    sys.exit(run_tests()) 

@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+
+{% block title %}Model Registry - Models{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">Model Registry</h1>
+    <div class="btn-toolbar mb-2 mb-md-0">
+        <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addModelModal">
+            <i class="bi bi-plus-circle me-1"></i> Add Model
+        </button>
+    </div>
+</div>
+
+{% if models|length > 0 %}
+<div class="row">
+    <div class="col-12 mb-4">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Models</h5>
+                <div class="input-group" style="width: 300px;">
+                    <input type="text" id="modelSearch" class="form-control" placeholder="Search models...">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Name</th>
+                                <th>Type</th>
+                                <th>Status</th>
+                                <th>Last Updated</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for model in models %}
+                            <tr>
+                                <td>{{ model.id }}</td>
+                                <td>{{ model.name }}</td>
+                                <td><span class="badge bg-primary">{{ model.type }}</span></td>
+                                <td>
+                                    {% if model.enabled %}
+                                    <span class="badge bg-success">Enabled</span>
+                                    {% else %}
+                                    <span class="badge bg-danger">Disabled</span>
+                                    {% endif %}
+                                    
+                                    {% if model.approval_status %}
+                                    <span class="badge bg-info">{{ model.approval_status }}</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ model.updated_at|default('N/A') }}</td>
+                                <td>
+                                    <div class="btn-group">
+                                        <a href="/admin/models/{{ model.id }}" class="btn btn-sm btn-outline-primary">
+                                            <i class="bi bi-info-circle"></i> Details
+                                        </a>
+                                        <button type="button" class="btn btn-sm btn-outline-danger" 
+                                                data-bs-toggle="modal" 
+                                                data-bs-target="#deleteModelModal"
+                                                data-model-id="{{ model.id }}"
+                                                data-model-name="{{ model.name }}">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-3">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Compare Models</h5>
+            </div>
+            <div class="card-body">
+                <form action="/admin/models/compare" method="get">
+                    <div class="mb-3">
+                        <label for="compareModels" class="form-label">Select models to compare:</label>
+                        <select multiple class="form-select" id="compareModels" name="model_ids" style="height: 150px;">
+                            {% for model in models %}
+                            <option value="{{ model.id }}">{{ model.name }} ({{ model.type }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <button type="button" id="compareBtn" class="btn btn-primary">Compare Selected Models</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% else %}
+<div class="alert alert-info">
+    <i class="bi bi-info-circle me-2"></i> No models have been registered yet. Click the "Add Model" button to register your first model.
+</div>
+{% endif %}
+
+<!-- Add Model Modal -->
+<div class="modal fade" id="addModelModal" tabindex="-1" aria-labelledby="addModelModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="addModelModalLabel">Add New Model</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addModelForm" action="/admin/models/create" method="post">
+                    <div class="mb-3">
+                        <label for="model_id" class="form-label">Model ID *</label>
+                        <input type="text" class="form-control" id="model_id" name="model_id" required>
+                        <div class="form-text">Unique identifier for the model (e.g., "claude-3-haiku")</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="name" class="form-label">Model Name *</label>
+                        <input type="text" class="form-control" id="name" name="name" required>
+                        <div class="form-text">Display name for the model (e.g., "Claude 3 Haiku")</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="model_type" class="form-label">Model Type *</label>
+                        <select class="form-select" id="model_type" name="model_type" required>
+                            <option value="" disabled selected>Select model type</option>
+                            {% for type in model_types %}
+                            <option value="{{ type }}">{{ type }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="endpoint" class="form-label">Endpoint URL</label>
+                        <input type="text" class="form-control" id="endpoint" name="endpoint">
+                        <div class="form-text">API endpoint URL for this model (if applicable)</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="description" class="form-label">Description</label>
+                        <textarea class="form-control" id="description" name="description" rows="3"></textarea>
+                    </div>
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" id="enabled" name="enabled" checked>
+                        <label class="form-check-label" for="enabled">
+                            Enabled
+                        </label>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" form="addModelForm" class="btn btn-primary">Add Model</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Model Modal -->
+<div class="modal fade" id="deleteModelModal" tabindex="-1" aria-labelledby="deleteModelModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deleteModelModalLabel">Confirm Deletion</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to delete the model <strong id="deleteModelName"></strong>?</p>
+                <p class="text-danger">This action cannot be undone. All metrics, artifacts, and other data associated with this model will be deleted.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form id="deleteModelForm" action="" method="post">
+                    <button type="submit" class="btn btn-danger">Delete Model</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Search functionality
+    document.getElementById('modelSearch').addEventListener('keyup', function() {
+        let searchTerm = this.value.toLowerCase();
+        let table = document.querySelector('table');
+        let rows = table.querySelectorAll('tbody tr');
+        
+        rows.forEach(row => {
+            let text = row.textContent.toLowerCase();
+            row.style.display = text.includes(searchTerm) ? '' : 'none';
+        });
+    });
+    
+    // Set up delete modal
+    document.getElementById('deleteModelModal').addEventListener('show.bs.modal', function (event) {
+        let button = event.relatedTarget;
+        let modelId = button.getAttribute('data-model-id');
+        let modelName = button.getAttribute('data-model-name');
+        
+        document.getElementById('deleteModelName').textContent = modelName;
+        document.getElementById('deleteModelForm').action = `/admin/models/${modelId}/delete`;
+    });
+    
+    // Compare button
+    document.getElementById('compareBtn').addEventListener('click', function() {
+        let select = document.getElementById('compareModels');
+        let selectedModels = Array.from(select.selectedOptions).map(option => option.value);
+        
+        if (selectedModels.length < 2) {
+            alert('Please select at least 2 models to compare');
+            return;
+        }
+        
+        window.location.href = `/admin/models/compare?model_ids=${selectedModels.join(',')}`;
+    });
+</script>
+{% endblock %} 

@@ -63,3 +63,14 @@ Thumbs.db
 
 # AWS
 .aws/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+coverage.xml
+*.cover
+
+# Documentation
+docs/_build/

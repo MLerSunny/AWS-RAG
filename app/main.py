@@ -15,7 +15,7 @@ if __name__ == "__main__" and __package__ is None:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .utils.logger import setup_logger
-from .routes import query, ingestion
+from .routes import query, ingestion, admin
 
 # Initialize logger
 logger = setup_logger(__name__)
@@ -51,6 +51,7 @@ app.add_middleware(
 # Include routers
 app.include_router(query.router, prefix="/api/v1", tags=["query"])
 app.include_router(ingestion.router, prefix="/api/v1", tags=["ingestion"])
+app.include_router(admin.router, tags=["admin"])
 
 @app.get("/")
 async def root():

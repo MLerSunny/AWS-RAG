@@ -8,6 +8,8 @@ import json
 import os
 import time
 import functools
+import uuid
+from ...services.storage.dynamodb_service import DynamoDBService
 from ...utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -28,261 +30,279 @@ class ModelConfig(BaseModel):
     endpoint: Optional[str] = None
     parameters: Dict[str, Any] = Field(default_factory=dict)
     description: Optional[str] = None
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
     enabled: bool = True
+    created_at: Optional[int] = None
+    updated_at: Optional[int] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
+class ModelArtifact(BaseModel):
+    """Model artifact information."""
+    model_id: str
+    version: str
+    location: str
+    size_bytes: Optional[int] = None
+    checksum: Optional[str] = None
+    format: Optional[str] = None
+    framework: Optional[str] = None
+    created_at: Optional[int] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+class ModelMetric(BaseModel):
+    """Model performance metrics."""
+    model_id: str
+    metric_id: str
+    name: str
+    value: Union[float, int, str, Dict[str, Any]]
+    type: str  # accuracy, latency, throughput, etc.
+    timestamp: Optional[int] = None
+    dataset: Optional[str] = None
+    description: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+class ModelApprovalStatus(str, Enum):
+    """Model approval workflow statuses."""
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    IN_REVIEW = "in_review"
+
 class ModelManager:
-    """Manager for multiple model types and configurations."""
+    """
+    Manager for LLM models across multiple providers with registry capabilities.
+    """
     
-    def __init__(self, auto_save_path: Optional[str] = None, load_on_start: bool = False):
+    def __init__(self, db_service: Optional[DynamoDBService] = None):
         """
-        Initialize the model manager.
+        Initialize the model manager with storage.
         
         Args:
-            auto_save_path (Optional[str]): Path to automatically save model registry
-            load_on_start (bool): Whether to load the registry on startup
+            db_service: DynamoDB service for persistence
         """
-        self.models = {}
-        self.auto_save_path = auto_save_path
-        self._last_list_time = 0
-        self._cached_model_list = []
+        self.db = db_service or DynamoDBService()
+        self._provider_cache = {}
         
-        # Create directory for auto-save if needed
-        if auto_save_path:
-            os.makedirs(os.path.dirname(auto_save_path), exist_ok=True)
+    def register_model(self, model_id: str, config: ModelConfig) -> bool:
+        """
+        Register a new model in the registry.
+        
+        Args:
+            model_id: Unique identifier for the model
+            config: Model configuration
             
-            # Load existing models if requested
-            if load_on_start and os.path.exists(auto_save_path):
-                try:
-                    self.load_from_file(auto_save_path)
-                except Exception as e:
-                    logger.error(f"Error loading model registry: {str(e)}")
-                
-        logger.info("Initialized ModelManager")
-    
-    def register_model(self, model_id: str, config: ModelConfig):
+        Returns:
+            bool: True if registration was successful
         """
-        Register a model configuration.
+        # Convert to dict
+        model_data = config.dict()
         
-        Args:
-            model_id (str): Unique identifier for the model
-            config (ModelConfig): Configuration for the model
-        """
-        # Set timestamps if not already set
-        if not config.created_at:
-            config.created_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        # Add timestamps
+        if not model_data.get('created_at'):
+            model_data['created_at'] = int(time.time())
         
-        config.updated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        model_data['updated_at'] = int(time.time())
         
-        # Add to registry
-        self.models[model_id] = config
-        logger.info(f"Registered model {model_id} of type {config.type}")
+        # Save to database
+        success = self.db.save_model(model_id, model_data)
+        if success:
+            logger.info(f"Registered model {model_id} of type {config.type}")
+        else:
+            logger.error(f"Failed to register model {model_id}")
         
-        # Auto-save if path is specified
-        if self.auto_save_path:
-            try:
-                self.save_to_file(self.auto_save_path)
-            except Exception as e:
-                logger.error(f"Error auto-saving model registry: {str(e)}")
-        
-        # Invalidate cache
-        self._last_list_time = 0
+        return success
     
     def get_model(self, model_id: str) -> Optional[ModelConfig]:
         """
         Get a model configuration by ID.
         
         Args:
-            model_id (str): The model ID
+            model_id: Unique identifier for the model
             
         Returns:
-            Optional[ModelConfig]: The model configuration or None if not found
+            Optional[ModelConfig]: Model configuration if found
         """
-        if model_id not in self.models:
-            logger.warning(f"Model {model_id} not found")
+        model_data = self.db.get_model(model_id)
+        if not model_data:
             return None
-            
-        return self.models[model_id]
+        
+        try:
+            # Convert to ModelConfig
+            return ModelConfig(**model_data)
+        except Exception as e:
+            logger.error(f"Error parsing model data for {model_id}: {str(e)}")
+            return None
     
-    def list_models(self) -> List[Dict]:
+    def list_models(self) -> List[Dict[str, Any]]:
         """
-        List all registered models.
+        List all models in the registry.
         
         Returns:
-            List[Dict]: List of model information
+            List[Dict[str, Any]]: List of model data
         """
-        # Check if we can use cached result
-        current_time = time.time()
-        if current_time - self._last_list_time < 60 and self._cached_model_list:  # 60 second cache
-            return self._cached_model_list
+        models = self.db.list_models()
+        return models
         
-        # Generate fresh list
-        result = [
-            {
-                "id": model_id,
-                "name": config.name,
-                "type": config.type,
-                "description": config.description,
-                "enabled": config.enabled
-            }
-            for model_id, config in self.models.items()
-            if config.enabled  # Only show enabled models
-        ]
-        
-        # Update cache
-        self._cached_model_list = result
-        self._last_list_time = current_time
-        
-        return result
-    
-    def list_models_by_type(self, model_type: ModelType) -> List[Dict]:
-        """
-        List models of a specific type.
-        
-        Args:
-            model_type (ModelType): The model type to filter by
-            
-        Returns:
-            List[Dict]: List of models matching the type
-        """
-        return [
-            {
-                "id": model_id,
-                "name": config.name,
-                "type": config.type,
-                "description": config.description,
-                "enabled": config.enabled
-            }
-            for model_id, config in self.models.items()
-            if config.type == model_type and config.enabled
-        ]
-    
-    def update_model(self, model_id: str, config_updates: Dict[str, Any]) -> bool:
+    def update_model(self, model_id: str, updates: Dict[str, Any]) -> bool:
         """
         Update a model configuration.
         
         Args:
-            model_id (str): The model ID to update
-            config_updates (Dict[str, Any]): Updates to apply to the model
+            model_id: Unique identifier for the model
+            updates: Dict of fields to update
             
         Returns:
-            bool: True if update was successful
+            bool: True if the update was successful
         """
-        if model_id not in self.models:
-            logger.warning(f"Cannot update model {model_id} - not found")
-            return False
-        
-        # Get existing config
-        existing_config = self.models[model_id]
-        
-        # Update fields
-        for key, value in config_updates.items():
-            if hasattr(existing_config, key):
-                setattr(existing_config, key, value)
-        
-        # Update timestamp
-        existing_config.updated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        
-        # Auto-save if path is specified
-        if self.auto_save_path:
-            try:
-                self.save_to_file(self.auto_save_path)
-            except Exception as e:
-                logger.error(f"Error auto-saving model registry: {str(e)}")
-        
-        # Invalidate cache
-        self._last_list_time = 0
-        
-        logger.info(f"Updated model {model_id}")
-        return True
+        return self.db.update_model(model_id, updates)
     
     def delete_model(self, model_id: str) -> bool:
         """
         Delete a model from the registry.
         
         Args:
-            model_id (str): The model ID to delete
+            model_id: Unique identifier for the model
             
         Returns:
             bool: True if deletion was successful
         """
-        if model_id not in self.models:
-            logger.warning(f"Cannot delete model {model_id} - not found")
-            return False
-        
-        # Remove from registry
-        del self.models[model_id]
-        
-        # Auto-save if path is specified
-        if self.auto_save_path:
-            try:
-                self.save_to_file(self.auto_save_path)
-            except Exception as e:
-                logger.error(f"Error auto-saving model registry: {str(e)}")
-        
-        # Invalidate cache
-        self._last_list_time = 0
-        
-        logger.info(f"Deleted model {model_id}")
-        return True
+        return self.db.delete_model(model_id)
     
-    def save_to_file(self, file_path: str):
+    def register_model_artifact(self, model_id: str, 
+                             artifact: ModelArtifact) -> bool:
         """
-        Save the model registry to a file.
+        Register a model artifact.
         
         Args:
-            file_path (str): Path to save the registry
+            model_id: Model identifier
+            artifact: Artifact information
+            
+        Returns:
+            bool: True if registration was successful
         """
-        try:
-            # Convert models to dict format
-            model_data = {
-                model_id: config.dict() 
-                for model_id, config in self.models.items()
+        # Convert to dict
+        artifact_data = artifact.dict()
+        
+        # Save to database
+        return self.db.save_model_artifact(model_id, artifact.version, artifact_data)
+    
+    def get_model_artifacts(self, model_id: str) -> List[ModelArtifact]:
+        """
+        Get all artifacts for a model.
+        
+        Args:
+            model_id: Model identifier
+            
+        Returns:
+            List[ModelArtifact]: List of model artifacts
+        """
+        artifacts_data = self.db.get_model_artifacts(model_id)
+        artifacts = []
+        
+        for artifact_data in artifacts_data:
+            try:
+                artifacts.append(ModelArtifact(**artifact_data))
+            except Exception as e:
+                logger.error(f"Error parsing artifact data: {str(e)}")
+                
+        return artifacts
+    
+    def record_model_metric(self, model_id: str, metric: ModelMetric) -> bool:
+        """
+        Record a metric for a model.
+        
+        Args:
+            model_id: Model identifier
+            metric: Performance metric information
+            
+        Returns:
+            bool: True if recording was successful
+        """
+        # Convert to dict
+        metric_data = metric.dict()
+        
+        # Generate ID if not provided
+        metric_id = metric.metric_id or f"metric_{uuid.uuid4()}"
+        
+        # Save to database
+        return self.db.save_model_metric(model_id, metric_id, metric_data)
+    
+    def get_model_metrics(self, model_id: str) -> List[ModelMetric]:
+        """
+        Get all metrics for a model.
+        
+        Args:
+            model_id: Model identifier
+            
+        Returns:
+            List[ModelMetric]: List of model metrics
+        """
+        metrics_data = self.db.get_model_metrics(model_id)
+        metrics = []
+        
+        for metric_data in metrics_data:
+            try:
+                metrics.append(ModelMetric(**metric_data))
+            except Exception as e:
+                logger.error(f"Error parsing metric data: {str(e)}")
+                
+        return metrics
+    
+    def update_model_approval_status(self, model_id: str, 
+                                 status: ModelApprovalStatus, 
+                                 reviewer: str = None, 
+                                 comments: str = None) -> bool:
+        """
+        Update the approval status of a model.
+        
+        Args:
+            model_id: Model identifier
+            status: New approval status
+            reviewer: Name of the reviewer
+            comments: Review comments
+            
+        Returns:
+            bool: True if update was successful
+        """
+        updates = {
+            'approval_status': status,
+            'approval_timestamp': int(time.time())
+        }
+        
+        if reviewer:
+            updates['approval_reviewer'] = reviewer
+            
+        if comments:
+            updates['approval_comments'] = comments
+            
+        return self.db.update_model(model_id, updates)
+    
+    def compare_models(self, model_ids: List[str], metrics: List[str] = None) -> Dict[str, Any]:
+        """
+        Compare multiple models based on their metrics.
+        
+        Args:
+            model_ids: List of model identifiers to compare
+            metrics: List of metric names to compare (or all if None)
+            
+        Returns:
+            Dict[str, Any]: Comparison results
+        """
+        results = {}
+        
+        for model_id in model_ids:
+            model = self.get_model(model_id)
+            if not model:
+                continue
+                
+            metrics_list = self.get_model_metrics(model_id)
+            
+            # Filter metrics if specific ones requested
+            if metrics:
+                metrics_list = [m for m in metrics_list if m.name in metrics]
+                
+            # Add to results
+            results[model_id] = {
+                'model': model.dict(),
+                'metrics': [m.dict() for m in metrics_list]
             }
             
-            # Create directory if it doesn't exist
-            os.makedirs(os.path.dirname(file_path), exist_ok=True)
-            
-            # Write to file
-            with open(file_path, 'w') as f:
-                json.dump(model_data, f, indent=2)
-                
-            logger.info(f"Saved model registry to {file_path}")
-        except Exception as e:
-            logger.error(f"Error saving model registry: {str(e)}")
-            raise
-    
-    def load_from_file(self, file_path: str):
-        """
-        Load the model registry from a file.
-        
-        Args:
-            file_path (str): Path to load the registry from
-        """
-        try:
-            if not os.path.exists(file_path):
-                logger.warning(f"Model registry file not found: {file_path}")
-                return
-                
-            with open(file_path, 'r') as f:
-                model_data = json.load(f)
-                
-            # Clear existing models
-            self.models = {}
-            
-            # Register models from file
-            for model_id, config_dict in model_data.items():
-                try:
-                    self.register_model(model_id, ModelConfig(**config_dict))
-                except Exception as e:
-                    logger.error(f"Error loading model {model_id}: {str(e)}")
-                
-            logger.info(f"Loaded model registry from {file_path} with {len(model_data)} models")
-            
-            # Invalidate cache
-            self._last_list_time = 0
-        except Exception as e:
-            logger.error(f"Error loading model registry: {str(e)}")
-            raise 
+        return results 

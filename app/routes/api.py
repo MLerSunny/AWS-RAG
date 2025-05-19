@@ -3,7 +3,7 @@ API routes for the GenAI document ingestion service.
 """
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, BackgroundTasks, status
 from typing import List, Dict, Optional, Any, Union
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, validator, Field
 import uuid
 import json
 
@@ -327,6 +327,185 @@ async def list_models():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error listing models: {str(e)}"
+        )
+
+@router.get("/models/{model_id}", status_code=status.HTTP_200_OK)
+async def get_model(model_id: str):
+    """
+    Get details of a specific model.
+    """
+    try:
+        model = model_manager.get_model(model_id)
+        if not model:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Model {model_id} not found"
+            )
+        
+        # Convert model to dict format
+        model_dict = {
+            "id": model_id,
+            "name": model.name,
+            "type": model.type,
+            "description": model.description,
+            "enabled": model.enabled,
+            "endpoint": model.endpoint,
+            "parameters": model.parameters,
+            "created_at": model.created_at,
+            "updated_at": model.updated_at,
+            "metadata": model.metadata
+        }
+        
+        return {
+            "success": True,
+            "model": model_dict
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving model: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrieving model: {str(e)}"
+        )
+
+class ModelCreateRequest(BaseModel):
+    id: str
+    name: str
+    type: str
+    endpoint: Optional[str] = None
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    description: Optional[str] = None
+    enabled: bool = True
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    
+    @validator('type')
+    def validate_model_type(cls, v):
+        try:
+            return ModelType(v)
+        except ValueError:
+            valid_types = [t.value for t in ModelType]
+            raise ValueError(f"Invalid model type. Must be one of: {', '.join(valid_types)}")
+        return v
+
+@router.post("/models", status_code=status.HTTP_201_CREATED)
+async def create_model(request: ModelCreateRequest):
+    """
+    Create a new model in the registry.
+    """
+    try:
+        # Check if model with this ID already exists
+        existing_model = model_manager.get_model(request.id)
+        if existing_model:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Model with ID {request.id} already exists"
+            )
+        
+        # Convert string type to ModelType enum
+        model_type = ModelType(request.type)
+        
+        # Create model config
+        config = ModelConfig(
+            name=request.name,
+            type=model_type,
+            endpoint=request.endpoint,
+            parameters=request.parameters,
+            description=request.description,
+            enabled=request.enabled,
+            metadata=request.metadata
+        )
+        
+        # Register the model
+        model_manager.register_model(request.id, config)
+        
+        return {
+            "success": True,
+            "message": f"Model {request.id} created successfully",
+            "model_id": request.id
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating model: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creating model: {str(e)}"
+        )
+
+class ModelUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    endpoint: Optional[str] = None
+    parameters: Optional[Dict[str, Any]] = None
+    description: Optional[str] = None
+    enabled: Optional[bool] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+@router.put("/models/{model_id}", status_code=status.HTTP_200_OK)
+async def update_model(model_id: str, request: ModelUpdateRequest):
+    """
+    Update an existing model in the registry.
+    """
+    try:
+        # Create update dict with only provided fields
+        updates = {k: v for k, v in request.dict().items() if v is not None}
+        
+        if not updates:
+            return {
+                "success": True,
+                "message": "No updates provided",
+                "model_id": model_id
+            }
+        
+        # Update the model
+        success = model_manager.update_model(model_id, updates)
+        
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Model {model_id} not found"
+            )
+        
+        return {
+            "success": True,
+            "message": f"Model {model_id} updated successfully",
+            "model_id": model_id
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating model: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating model: {str(e)}"
+        )
+
+@router.delete("/models/{model_id}", status_code=status.HTTP_200_OK)
+async def delete_model(model_id: str):
+    """
+    Delete a model from the registry.
+    """
+    try:
+        success = model_manager.delete_model(model_id)
+        
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Model {model_id} not found"
+            )
+        
+        return {
+            "success": True,
+            "message": f"Model {model_id} deleted successfully",
+            "model_id": model_id
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting model: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting model: {str(e)}"
         )
 
 @router.post("/ingest", status_code=status.HTTP_202_ACCEPTED)
