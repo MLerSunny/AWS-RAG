@@ -249,6 +249,25 @@ class DynamoDBService:
                     {'AttributeName': 'metric_id', 'AttributeType': 'S'}
                 ]
             )
+        
+        # User interactions table
+        self.ensure_user_interactions_table()
+
+    def ensure_user_interactions_table(self):
+        """
+        Ensure the 'genai_user_interactions' table exists with 'pk' as the primary key.
+        """
+        table_name = f"{self.table_prefix}user_interactions" if not self.table_prefix.endswith('_') else f"{self.table_prefix}user_interactions"
+        try:
+            self._get_table(table_name)
+        except TableNotFoundError:
+            key_schema: Sequence[KeySchemaElementTypeDef] = [
+                {"AttributeName": "pk", "KeyType": "HASH"}  # type: ignore
+            ]
+            attribute_definitions: Sequence[AttributeDefinitionTypeDef] = [
+                {"AttributeName": "pk", "AttributeType": "S"}  # type: ignore
+            ]
+            self._create_table(table_name, key_schema, attribute_definitions)
 
     def save_model(self, model_id: str, model_data: Dict[str, Any]) -> bool:
         """

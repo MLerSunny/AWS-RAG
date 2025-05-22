@@ -1,0 +1,66 @@
+{% extends 'base.html' %}
+{% block content %}
+<h1>Analytics Dashboard</h1>
+
+<h2>Usage Stats</h2>
+<p>Total Queries: {{ usage.total_queries }}</p>
+<table border="1">
+    <tr><th>Model</th><th>Queries</th></tr>
+    {% for model, count in usage.queries_per_model.items() %}
+    <tr><td>{{ model }}</td><td>{{ count }}</td></tr>
+    {% endfor %}
+</table>
+
+<h2>Feedback Stats</h2>
+<table border="1">
+    <tr><th>Model</th><th>Helpful</th><th>Unhelpful</th></tr>
+    {% for model, stats in feedback.feedback_stats.items() %}
+    <tr><td>{{ model }}</td><td>{{ stats.helpful }}</td><td>{{ stats.unhelpful }}</td></tr>
+    {% endfor %}
+</table>
+
+<h2>Per-Variant Stats</h2>
+<table border="1">
+    <tr><th>Experiment</th><th>Variant</th><th>Model</th><th>Queries</th><th>Helpful</th><th>Unhelpful</th></tr>
+    {% for v in variant.variant_stats %}
+    <tr>
+        <td>{{ v.experiment_id }}</td>
+        <td>{{ v.variant_id }}</td>
+        <td>{{ v.model_id }}</td>
+        <td>{{ v.queries }}</td>
+        <td>{{ v.helpful }}</td>
+        <td>{{ v.unhelpful }}</td>
+    </tr>
+    {% endfor %}
+</table>
+
+<h2>Time Trends (Last 30 Days)</h2>
+<canvas id="trendChart" width="600" height="200"></canvas>
+<script>
+const trendData = {{ timetrends.queries_per_day | tojson }};
+const labels = Object.keys(trendData).reverse();
+const data = Object.values(trendData).reverse();
+const ctx = document.getElementById('trendChart').getContext('2d');
+if (window.Chart) {
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{ label: 'Queries per Day', data: data, borderColor: 'blue', fill: false }]
+        },
+        options: { scales: { y: { beginAtZero: true } } }
+    });
+} else {
+    ctx.font = '14px Arial';
+    ctx.fillText('Chart.js not loaded. Showing raw data below:', 10, 20);
+    ctx.fillText(labels.join(', '), 10, 40);
+    ctx.fillText(data.join(', '), 10, 60);
+}
+</script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<h2>User Engagement</h2>
+<p>Unique Users: {{ engagement.unique_users }}</p>
+<p>Average Queries per User: {{ engagement.avg_queries_per_user|round(2) }}</p>
+
+{% endblock %} 

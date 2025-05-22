@@ -19,6 +19,8 @@ from ..services.finetune.bedrock_finetune import BedrockFineTuner, FineTuneConfi
 from ..services.connectors.sharepoint_connector import SharePointConnector
 from ..utils.logger import setup_logger
 from ..config import settings
+from ..utils.dynamodb_types import UserInteraction, DynamoDBTypeConverter
+from app.services.evaluation.model_benchmark import ModelBenchmark, BenchmarkConfig, BenchmarkResult
 
 # Import ServiceNowConnector conditionally
 try:
@@ -146,39 +148,97 @@ class ServiceNowSearchRequest(BaseModel):
     search_term: str
     limit: int = 20
 
+class InteractionLogRequest(BaseModel):
+    """Request model for logging user interactions."""
+    query: str = Field(..., description="User query")
+    response: str = Field(..., description="System response")
+    user_id: Optional[str] = None
+    session_id: Optional[str] = None
+    model_id: Optional[str] = None
+    is_helpful: Optional[bool] = None
+    feedback: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+class BenchmarkRequest(BaseModel):
+    """Request model for starting a benchmark comparison."""
+    model_ids: List[str]
+    versions: List[str]
+    evaluation_data_path: str
+    metrics: Optional[List[str]] = None
+    batch_size: Optional[int] = 32
+    comparison_name: str
+
+class BenchmarkResponse(BaseModel):
+    """Response model for benchmark results."""
+    job_id: str
+    status: str
+    results: Optional[BenchmarkResult] = None
+
 # Original routes
 @router.post("/query", response_model=QueryResponse, status_code=status.HTTP_200_OK)
 async def query_endpoint(request: QueryRequest):
     """
     Query the system with a question.
     Supports both RAG and direct LLM queries depending on the model_id.
+    Integrates A/B testing if an active experiment exists.
     """
+    # Find an active experiment
+    experiment = None
+    for exp_summary in ab_testing_manager.list_experiments():
+        if exp_summary.get("status") == "active":
+            exp = ab_testing_manager.get_experiment(exp_summary["id"])
+            if exp and exp.is_active():
+                experiment = exp
+                break
+    assigned_model_id = request.model_id
+    experiment_id = None
+    variant_id = None
+    user_id = getattr(request, 'user_id', None) or "anonymous"
+    if experiment:
+        variant = experiment.get_variant_for_user(user_id)
+        if variant and hasattr(variant, "model_id"):
+            assigned_model_id = variant.model_id
+            experiment_id = experiment.id
+            variant_id = getattr(variant, "id", None)
     # Get the model configuration
-    model_config = model_manager.get_model(request.model_id)
+    model_config = model_manager.get_model(assigned_model_id)
     if not model_config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, 
-            detail=f"Model {request.model_id} not found"
+            detail=f"Model {assigned_model_id} not found"
         )
-    
     # Generate a response ID
     response_id = str(uuid.uuid4())
-    
     try:
         # Process query based on model type
         if model_config.type == ModelType.RAG:
-            # RAG query
-            return await process_rag_query(request, response_id, model_config)
-        
+            result = await process_rag_query(request, response_id, model_config)
         elif model_config.type in [ModelType.BEDROCK_BASE, ModelType.BEDROCK_FINETUNED]:
-            # Direct LLM query
-            return await process_llm_query(request, response_id, model_config)
-        
+            result = await process_llm_query(request, response_id, model_config)
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, 
                 detail=f"Unsupported model type: {model_config.type}"
             )
+        # Log interaction with experiment/variant info if present
+        from ..services.storage.dynamodb_service import DynamoDBService
+        db_service = DynamoDBService()
+        table_name = "genai_user_interactions"
+        import time
+        item = {
+            "pk": response_id,
+            "response_id": response_id,
+            "user_id": user_id,
+            "query": request.query,
+            "response": result["answer"],
+            "model_id": assigned_model_id,
+            "timestamp": time.time(),
+            "experiment_id": experiment_id,
+            "variant_id": variant_id
+        }
+        table = db_service._get_table(table_name)
+        table.put_item(Item=item)
+        return result
     except Exception as e:
         logger.error(f"Query error: {str(e)}")
         raise HTTPException(
@@ -979,4 +1039,100 @@ async def search_servicenow_knowledge(request: ServiceNowSearchRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error searching ServiceNow knowledge base: {str(e)}"
-        ) 
+        )
+
+@router.post("/interactions", status_code=status.HTTP_201_CREATED)
+async def log_interaction(request: InteractionLogRequest):
+    """
+    Log a user interaction (query, response, feedback, etc.) for analytics and fine-tuning.
+    """
+    from ..services.storage.dynamodb_service import DynamoDBService
+    import time
+    import uuid
+    
+    db_service = DynamoDBService()
+    table_name = "genai_user_interactions"
+    
+    # Create UserInteraction instance with validation
+    interaction = UserInteraction(
+        pk=str(uuid.uuid4()),  # Generate primary key
+        response_id=str(uuid.uuid4()),
+        query=request.query,
+        response=request.response,
+        timestamp=time.time(),
+        user_id=request.user_id,
+        session_id=request.session_id,
+        model_id=request.model_id,
+        is_helpful=request.is_helpful,
+        feedback=request.feedback,
+        metadata=request.metadata
+    )
+    
+    # Convert to DynamoDB format
+    item = interaction.to_dynamodb()
+    
+    # Save to DynamoDB
+    try:
+        table = db_service._get_table(table_name)
+        table.put_item(Item=item)
+        return {"success": True, "response_id": interaction.response_id}
+    except Exception as e:
+        logger.error(f"Failed to log interaction: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to log interaction: {str(e)}")
+
+@router.post("/models/benchmark", response_model=BenchmarkResponse)
+async def start_benchmark(request: BenchmarkRequest):
+    """
+    Start a benchmark comparison between multiple model versions.
+    
+    Args:
+        request: Benchmark configuration
+        
+    Returns:
+        BenchmarkResponse containing job ID and initial status
+    """
+    try:
+        benchmark = ModelBenchmark()
+        config = BenchmarkConfig(
+            model_ids=request.model_ids,
+            versions=request.versions,
+            evaluation_data_path=request.evaluation_data_path,
+            metrics=request.metrics or ["accuracy", "f1", "precision", "recall"],
+            batch_size=request.batch_size or 32,
+            comparison_name=request.comparison_name
+        )
+        
+        job_id = benchmark.run_benchmark(config)
+        return BenchmarkResponse(
+            job_id=job_id,
+            status="running"
+        )
+    except Exception as e:
+        logger.error(f"Error starting benchmark: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/models/benchmark/{job_id}", response_model=BenchmarkResponse)
+async def get_benchmark_results(job_id: str):
+    """
+    Get results from a benchmark comparison.
+    
+    Args:
+        job_id: Benchmark job ID
+        
+    Returns:
+        BenchmarkResponse containing results
+    """
+    try:
+        benchmark = ModelBenchmark()
+        results = benchmark.get_benchmark_results(job_id)
+        
+        return BenchmarkResponse(
+            job_id=job_id,
+            status="completed" if results.summary else "running",
+            results=results
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error getting benchmark results: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e)) 

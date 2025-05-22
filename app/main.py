@@ -16,6 +16,9 @@ from slowapi.errors import RateLimitExceeded
 from .utils.logger import setup_logger
 from .routes import query, ingestion, admin
 from exceptions import AWSRAGError, ErrorCode
+import threading
+import time
+from app.services.processing.interaction_processor import run_processing_pipeline
 
 # Package handling for imports
 if __name__ == "__main__" and __package__ is None:
@@ -127,6 +130,26 @@ async def root():
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
+
+def start_scheduled_processing():
+    def job():
+        while True:
+            try:
+                run_processing_pipeline(
+                    output_path="processed_interactions.jsonl",
+                    days=7,
+                    min_feedback=True,
+                    table_prefix="genai_"
+                )
+            except Exception as e:
+                logger.error(f"Scheduled processing job failed: {str(e)}")
+            time.sleep(24 * 60 * 60)  # Run every 24 hours
+    t = threading.Thread(target=job, daemon=True)
+    t.start()
+
+@app.on_event("startup")
+def schedule_background_jobs():
+    start_scheduled_processing()
 
 # For direct execution
 if __name__ == "__main__":

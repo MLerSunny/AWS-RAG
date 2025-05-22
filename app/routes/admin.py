@@ -19,6 +19,8 @@ from ..services.storage.dynamodb_service import DynamoDBService
 from ..utils.logger import setup_logger
 from ..utils.validation import validate_filename
 from ..utils.cache import Cache
+from app.services.finetune.bedrock_finetune import BedrockFineTuner, FineTuneConfig
+from app.config import settings
 
 logger = setup_logger(__name__)
 
@@ -481,4 +483,265 @@ async def compare_models_page(request: Request, model_ids: str):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error comparing models: {str(e)}"
-        ) 
+        )
+
+@router.post("/finetune/trigger", status_code=201)
+async def trigger_finetune(
+    job_name: str,
+    base_model_id: str,
+    custom_model_name: str = None,
+    description: str = None
+):
+    """
+    Admin endpoint to trigger a Bedrock fine-tuning job using processed_interactions.jsonl.
+    """
+    processed_file = "processed_interactions.jsonl"
+    s3_bucket = settings.FINETUNE_OUTPUT_BUCKET
+    if not s3_bucket:
+        raise HTTPException(status_code=400, detail="FINETUNE_OUTPUT_BUCKET is not set in settings.")
+    if not job_name or not base_model_id:
+        raise HTTPException(status_code=400, detail="job_name and base_model_id are required.")
+    s3_key = f"finetune-data/{job_name}.jsonl"
+    output_data_path = f"s3://{s3_bucket}/finetune-output/{job_name}/"
+    training_data_path = f"s3://{s3_bucket}/{s3_key}"
+
+    bedrock_finetune = BedrockFineTuner()
+    # Upload file to S3
+    try:
+        uploaded = bedrock_finetune.upload_training_file(processed_file, s3_bucket, s3_key)
+        if not uploaded:
+            raise Exception("Upload to S3 failed")
+    except Exception as e:
+        logger.error(f"Failed to upload training file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to upload training file: {str(e)}")
+
+    # Create fine-tune config
+    config = FineTuneConfig(
+        job_name=job_name,
+        base_model_id=base_model_id,
+        training_data_path=training_data_path,
+        output_data_path=output_data_path,
+        custom_model_name=custom_model_name or "",
+        description=description or ""
+    )
+    # Trigger fine-tuning job
+    try:
+        job = bedrock_finetune.create_fine_tune_job(config)
+        return {"success": True, "job": job.to_dict()}
+    except Exception as e:
+        logger.error(f"Failed to create fine-tuning job: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create fine-tuning job: {str(e)}")
+
+@router.get("/finetune/status/{job_id}", status_code=200)
+async def get_finetune_status(job_id: str):
+    """
+    Get the status of a Bedrock fine-tuning job by job_id.
+    Sends a notification if the job is completed or failed (placeholder for notification logic).
+    """
+    bedrock_finetune = BedrockFineTuner()
+    try:
+        job = bedrock_finetune.get_job_status(job_id)
+        status = job.status.value if hasattr(job.status, 'value') else str(job.status)
+        # Placeholder: Notification logic
+        if status in ["completed", "failed"]:
+            # TODO: Integrate with email/Slack notification service here
+            logger.info(f"Notification: Fine-tuning job {job_id} status is {status}.")
+        return {"success": True, "job": job.to_dict()}
+    except Exception as e:
+        logger.error(f"Failed to get fine-tuning job status: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get job status: {str(e)}")
+
+@router.post("/models/register", status_code=201)
+async def register_model(
+    model_id: str,
+    name: str,
+    model_type: str,
+    description: str = "",
+    endpoint: str = "",
+    metadata: Optional[dict] = None
+):
+    """
+    Register a new model (base or fine-tuned) in the model registry.
+    """
+    try:
+        config = ModelConfig(
+            name=name,
+            type=ModelType(model_type),
+            endpoint=endpoint or None,
+            description=description or None,
+            enabled=True,
+            parameters={},
+            metadata=metadata if metadata is not None else {}
+        )
+        model_manager.register_model(model_id, config)
+        return {"success": True, "model_id": model_id}
+    except Exception as e:
+        logger.error(f"Error registering model: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error registering model: {str(e)}")
+
+@router.post("/models/{model_id}/activate", status_code=200)
+async def activate_model(model_id: str):
+    """
+    Activate a model for serving (set as active in the registry).
+    """
+    try:
+        updates = {"enabled": True}
+        all_models = model_manager.list_models()
+        this_model = model_manager.get_model(model_id)
+        if not this_model:
+            raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
+        for m in all_models:
+            m_type = getattr(m, "type", None) if not isinstance(m, dict) else m.get("type")
+            m_id = getattr(m, "id", None) if not isinstance(m, dict) else m.get("id")
+            if m_type == this_model.type and m_id and m_id != model_id:
+                model_manager.update_model(m_id, {"enabled": False})
+        model_manager.update_model(model_id, updates)
+        return {"success": True, "model_id": model_id, "activated": True}
+    except Exception as e:
+        logger.error(f"Error activating model: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error activating model: {str(e)}")
+
+@router.get("/analytics/usage", status_code=200)
+async def analytics_usage():
+    """
+    Get basic usage stats: total queries and queries per model.
+    """
+    from app.services.storage.dynamodb_service import DynamoDBService
+    db_service = DynamoDBService()
+    table_name = "genai_user_interactions"
+    table = db_service._get_table(table_name)
+    response = table.scan()
+    items = response.get("Items", [])
+    total_queries = len(items)
+    queries_per_model = {}
+    for item in items:
+        model_id = item.get("model_id", "unknown")
+        queries_per_model[model_id] = queries_per_model.get(model_id, 0) + 1
+    return {"total_queries": total_queries, "queries_per_model": queries_per_model}
+
+@router.get("/analytics/feedback", status_code=200)
+async def analytics_feedback():
+    """
+    Get feedback stats: helpful/unhelpful counts per model.
+    """
+    from app.services.storage.dynamodb_service import DynamoDBService
+    db_service = DynamoDBService()
+    table_name = "genai_user_interactions"
+    table = db_service._get_table(table_name)
+    response = table.scan()
+    items = response.get("Items", [])
+    feedback_stats = {}
+    for item in items:
+        model_id = item.get("model_id", "unknown")
+        is_helpful = item.get("is_helpful")
+        if model_id not in feedback_stats:
+            feedback_stats[model_id] = {"helpful": 0, "unhelpful": 0}
+        if is_helpful is True:
+            feedback_stats[model_id]["helpful"] += 1
+        elif is_helpful is False:
+            feedback_stats[model_id]["unhelpful"] += 1
+    return {"feedback_stats": feedback_stats}
+
+@router.get("/analytics/variant", status_code=200)
+async def analytics_variant():
+    """
+    Get per-variant stats: queries and feedback per experiment/variant.
+    """
+    from app.services.storage.dynamodb_service import DynamoDBService
+    db_service = DynamoDBService()
+    table_name = "genai_user_interactions"
+    table = db_service._get_table(table_name)
+    response = table.scan()
+    items = response.get("Items", [])
+    variant_stats = {}
+    for item in items:
+        experiment_id = item.get("experiment_id")
+        variant_id = item.get("variant_id")
+        model_id = item.get("model_id", "unknown")
+        is_helpful = item.get("is_helpful")
+        if experiment_id and variant_id:
+            key = f"{experiment_id}:{variant_id}"
+            if key not in variant_stats:
+                variant_stats[key] = {"experiment_id": experiment_id, "variant_id": variant_id, "model_id": model_id, "queries": 0, "helpful": 0, "unhelpful": 0}
+            variant_stats[key]["queries"] += 1
+            if is_helpful is True:
+                variant_stats[key]["helpful"] += 1
+            elif is_helpful is False:
+                variant_stats[key]["unhelpful"] += 1
+    return {"variant_stats": list(variant_stats.values())}
+
+@router.get("/analytics/timetrends", status_code=200)
+async def analytics_timetrends():
+    """
+    Get time trends: queries per day for the last 30 days.
+    """
+    from app.services.storage.dynamodb_service import DynamoDBService
+    from datetime import datetime, timedelta
+    db_service = DynamoDBService()
+    table_name = "genai_user_interactions"
+    table = db_service._get_table(table_name)
+    response = table.scan()
+    items = response.get("Items", [])
+    today = datetime.utcnow().date()
+    trends = {}
+    for i in range(30):
+        day = today - timedelta(days=i)
+        trends[day.isoformat()] = 0
+    for item in items:
+        ts = item.get("timestamp")
+        if ts:
+            try:
+                dt = datetime.utcfromtimestamp(float(ts))
+                day = dt.date().isoformat()
+                if day in trends:
+                    trends[day] += 1
+            except Exception:
+                continue
+    return {"queries_per_day": trends}
+
+@router.get("/analytics/engagement", status_code=200)
+async def analytics_engagement():
+    """
+    Get user engagement stats: unique users, average queries per user.
+    """
+    from app.services.storage.dynamodb_service import DynamoDBService
+    db_service = DynamoDBService()
+    table_name = "genai_user_interactions"
+    table = db_service._get_table(table_name)
+    response = table.scan()
+    items = response.get("Items", [])
+    user_counts = {}
+    for item in items:
+        user_id = item.get("user_id", "anonymous")
+        user_counts[user_id] = user_counts.get(user_id, 0) + 1
+    unique_users = len(user_counts)
+    total_queries = len(items)
+    avg_queries_per_user = total_queries / unique_users if unique_users else 0
+    return {"unique_users": unique_users, "avg_queries_per_user": avg_queries_per_user}
+
+@router.get("/analytics", response_class=HTMLResponse)
+async def analytics_dashboard(request: Request):
+    """
+    Admin analytics dashboard page with visualizations.
+    """
+    from fastapi import BackgroundTasks
+    import httpx
+    # Fetch analytics data from internal endpoints
+    base_url = str(request.base_url).rstrip("/")
+    async with httpx.AsyncClient() as client:
+        usage = (await client.get(f"{base_url}/admin/analytics/usage")).json()
+        feedback = (await client.get(f"{base_url}/admin/analytics/feedback")).json()
+        variant = (await client.get(f"{base_url}/admin/analytics/variant")).json()
+        timetrends = (await client.get(f"{base_url}/admin/analytics/timetrends")).json()
+        engagement = (await client.get(f"{base_url}/admin/analytics/engagement")).json()
+    return templates.TemplateResponse(
+        "admin/analytics.html",
+        {
+            "request": request,
+            "usage": usage,
+            "feedback": feedback,
+            "variant": variant,
+            "timetrends": timetrends,
+            "engagement": engagement
+        }
+    ) 
